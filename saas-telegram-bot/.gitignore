@@ -3,3 +3,6 @@ node_modules
 .env
 
 /generated/prisma
+
+# TypeScript incremental cache (fresh CI/build outputs)
+tsconfig.build.tsbuildinfo
