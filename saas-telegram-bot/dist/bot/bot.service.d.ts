@@ -23,6 +23,7 @@ export declare class BotService implements OnModuleInit, OnModuleDestroy {
     private checkOwner;
     private checkActive;
     private tid;
+    private errText;
     private safeEdit;
     private registerHandlers;
     private registerStartHelp;

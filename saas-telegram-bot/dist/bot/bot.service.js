@@ -161,6 +161,11 @@ let BotService = BotService_1 = class BotService {
         return true;
     }
     tid(ctx) { return ctx.from.id.toString(); }
+    errText(err) {
+        if (err instanceof Error)
+            return err.message;
+        return String(err);
+    }
     async safeEdit(ctx, text, extra) {
         try {
             await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
@@ -550,10 +555,10 @@ let BotService = BotService_1 = class BotService {
                 await ctx.reply('⏳ جاري التحقق من الجلسة...', telegraf_1.Markup.removeKeyboard());
                 try {
                     const r = await this.sessionService.addSessionString(this.tid(ctx), text);
-                    await ctx.replyWithMarkdown(r.message, SESSIONS_MENU);
+                    await ctx.reply(r.message, SESSIONS_MENU);
                 }
                 catch (e) {
-                    await ctx.replyWithMarkdown(`❌ *الجلسة غير صالحة أو منتهية*\n\n${e.message}`, SESSIONS_MENU);
+                    await ctx.reply(`❌ الجلسة غير صالحة أو منتهية.\n\n${this.errText(e)}`, SESSIONS_MENU);
                 }
                 return;
             }

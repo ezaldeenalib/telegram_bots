@@ -30,13 +30,13 @@ export declare class SessionService {
     getClient(telegramId: string): Promise<TelegramClient | null>;
     listSessions(telegramId: string): Promise<{
         id: number;
-        created_at: Date;
         label: string;
         phone: string | null;
         account_name: string | null;
         account_id: string | null;
         source: string;
         status: string;
+        created_at: Date;
     }[]>;
     deleteSession(telegramId: string, sessionId: number): Promise<{
         message: string;

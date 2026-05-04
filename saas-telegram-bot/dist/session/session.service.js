@@ -16,6 +16,7 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const config_1 = require("@nestjs/config");
 const telegram_1 = require("telegram");
 const sessions_1 = require("telegram/sessions");
+const Logger_1 = require("telegram/extensions/Logger");
 const encryption_util_1 = require("../common/encryption.util");
 const RATE_LIMIT_MAX = 3;
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -40,7 +41,10 @@ let SessionService = SessionService_1 = class SessionService {
         return `${telegramId}_${sessionId}`;
     }
     buildClient(sessionStr) {
-        return new telegram_1.TelegramClient(new sessions_1.StringSession(sessionStr), this.getApiId(), this.getApiHash(), { connectionRetries: 3, baseLogger: { levels: [], log: () => { } } });
+        return new telegram_1.TelegramClient(new sessions_1.StringSession(sessionStr), this.getApiId(), this.getApiHash(), {
+            connectionRetries: 3,
+            baseLogger: new Logger_1.Logger(Logger_1.LogLevel.NONE),
+        });
     }
     checkRateLimit(telegramId) {
         const now = Date.now();
@@ -73,10 +77,7 @@ let SessionService = SessionService_1 = class SessionService {
         let me;
         try {
             await client.connect();
-            const result = await client.invoke(new telegram_1.Api.users.GetFullUser({
-                id: new telegram_1.Api.InputUserSelf(),
-            }));
-            me = result.users[0];
+            me = await client.getMe();
         }
         catch (err) {
             try {
@@ -105,7 +106,9 @@ let SessionService = SessionService_1 = class SessionService {
         this.activeClients.set(key, client);
         this.logger.log(`[addSessionString] session #${saved.id} added for user ${telegramId} → ${accountName}`);
         return {
-            message: `✅ تم ربط الحساب *${accountName}* بنجاح!`,
+            message: `✅ تم ربط حسابك بنجاح!\n` +
+                `👤 الحساب: ${accountName}\n` +
+                `🆔 المعرف: ${accountId}`,
             accountName,
             accountId,
         };

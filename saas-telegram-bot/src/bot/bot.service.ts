@@ -182,6 +182,12 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
   private tid(ctx: Context) { return ctx.from!.id.toString(); }
 
+  /** Plain-text bot errors — avoid Telegram Markdown parse failures */
+  private errText(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    return String(err);
+  }
+
   private async safeEdit(ctx: Context, text: string, extra?: object) {
     try {
       await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra } as any);
@@ -660,10 +666,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         await ctx.reply('⏳ جاري التحقق من الجلسة...', Markup.removeKeyboard());
         try {
           const r = await this.sessionService.addSessionString(this.tid(ctx), text);
-          await ctx.replyWithMarkdown(r.message, SESSIONS_MENU);
+          await ctx.reply(r.message, SESSIONS_MENU);
         } catch (e) {
-          await ctx.replyWithMarkdown(
-            `❌ *الجلسة غير صالحة أو منتهية*\n\n${(e as Error).message}`,
+          await ctx.reply(
+            `❌ الجلسة غير صالحة أو منتهية.\n\n${this.errText(e)}`,
             SESSIONS_MENU,
           );
         }

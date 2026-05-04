@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { TelegramClient, Api } from 'telegram';
 import { StringSession } from 'telegram/sessions';
+import { Logger as GramLogger, LogLevel } from 'telegram/extensions/Logger';
 import { encrypt, decrypt } from '../common/encryption.util';
 
 interface PendingLogin {
@@ -64,7 +65,11 @@ export class SessionService {
       new StringSession(sessionStr),
       this.getApiId(),
       this.getApiHash(),
-      { connectionRetries: 3, baseLogger: { levels: [], log: () => {} } as any },
+      {
+        connectionRetries: 3,
+        // gramJS expects Logger with .info/.warn/etc.; fake objects break at runtime.
+        baseLogger: new GramLogger(LogLevel.NONE),
+      },
     );
   }
 
@@ -124,10 +129,7 @@ export class SessionService {
     let me: Api.User;
     try {
       await client.connect();
-      const result = await client.invoke(new Api.users.GetFullUser({
-        id: new Api.InputUserSelf(),
-      }));
-      me = result.users[0] as Api.User;
+      me = await client.getMe();
     } catch (err) {
       try { await client.disconnect(); } catch { /* */ }
       this.logger.warn(
@@ -163,7 +165,10 @@ export class SessionService {
     );
 
     return {
-      message: `✅ تم ربط الحساب *${accountName}* بنجاح!`,
+      message:
+        `✅ تم ربط حسابك بنجاح!\n` +
+        `👤 الحساب: ${accountName}\n` +
+        `🆔 المعرف: ${accountId}`,
       accountName,
       accountId,
     };
