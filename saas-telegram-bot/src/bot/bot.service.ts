@@ -300,36 +300,32 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     const start = p * PAGE;
     const slice = groups.slice(start, start + PAGE);
 
-    const lines = slice.map((g, i) => {
-      const num = start + i + 1;
-      const st = g.is_active ? '✅' : '❌';
-      const name = g.group_name.replace(/\n/g, ' ').trim() || 'بدون اسم';
-      return `${num}. ${st} ${name}\n   المعرف: ${g.group_id}`;
-    });
-
-    const header =
-      `📋 مجموعاتك (${n})\n\n` +
-      `🗑 اضغط «حذف» بجوار المجموعة لإزالتها من البوت فقط (لا يُلغي عضويتك فيها على Telegram).\n\n` +
-      `صفحة ${p + 1} من ${totalPages}\n\n`;
-
-    let text = header + lines.join('\n\n');
-    if (text.length > 4090) {
-      text = text.slice(0, 4087) + '…';
-    }
+    const text =
+      `📋 مجموعاتك (${n})` +
+      (totalPages > 1 ? `  —  صفحة ${p + 1} / ${totalPages}` : '') +
+      `\n\nاضغط 🗑 لإزالة المجموعة من البوت (لا يُلغي عضويتك على Telegram).`;
 
     type CB = ReturnType<typeof Markup.button.callback>;
     const rows: CB[][] = [];
+
     for (const g of slice) {
-      const shortName = this.truncateImportBtn(g.group_name, 24);
+      // عرض المعرف الكامل لـ Telegram على زر اليسار (معلوماتي — يُظهر الاسم عند الضغط)
+      const idLabel = g.group_id.startsWith('-') ? g.group_id : `-${g.group_id}`;
       rows.push([
-        Markup.button.callback(`🗑 حذف: ${shortName}`, `grp_del_${g.id}_p${p}`),
+        Markup.button.callback(idLabel, `grp_info_${g.id}`),
+        Markup.button.callback('🗑', `grp_del_${g.id}_p${p}`),
       ]);
     }
+
     const nav: CB[] = [];
     if (p > 0) nav.push(Markup.button.callback('‹ السابق', `grp_pg_${p - 1}`));
     if (p < totalPages - 1) nav.push(Markup.button.callback('التالي ›', `grp_pg_${p + 1}`));
     if (nav.length) rows.push(nav);
-    rows.push([Markup.button.callback('🔙 قائمة المجموعات', 'menu_groups')]);
+
+    rows.push([
+      Markup.button.callback('➕ إضافة كروب', 'add_group_by_id'),
+      Markup.button.callback('🔙 الصفحة الرئيسية', 'main_menu'),
+    ]);
 
     return { text, page: p, markup: Markup.inlineKeyboard(rows) };
   }
@@ -645,6 +641,19 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       }
       const payload = this.groupsManageListPayload(groups, 0);
       await ctx.reply(payload.text, { ...payload.markup });
+    });
+
+    // زر المعرف (يسار) — يُظهر اسم المجموعة كـ toast
+    this.bot.action(/^grp_info_(\d+)$/, async (ctx) => {
+      const dbId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+      try {
+        const groups = await this.groupsService.getGroups(this.tid(ctx));
+        const g = groups.find((x) => x.id === dbId);
+        const name = g ? g.group_name : 'مجموعة';
+        await this.answerCbSafe(ctx, name.slice(0, 200));
+      } catch {
+        await this.answerCbSafe(ctx);
+      }
     });
 
     this.bot.action(/^grp_pg_(\d+)$/, async (ctx) => {
