@@ -9,8 +9,20 @@ async function bootstrap() {
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
 
-  const port = process.env.PORT ?? 3000;
-  await app.listen(port);
+  const port = Number(process.env.PORT ?? 3000);
+  try {
+    await app.listen(port);
+  } catch (err: unknown) {
+    const code = err && typeof err === 'object' && 'code' in err ? (err as NodeJS.ErrnoException).code : undefined;
+    if (code === 'EADDRINUSE') {
+      Logger.error(
+        `Port ${port} is already in use. Stop the other process or set PORT in .env ` +
+          `(e.g. PORT=3001). Linux: ss -tlnp | grep :${port}  then kill that PID.`,
+        'Bootstrap',
+      );
+    }
+    throw err;
+  }
 
   Logger.log(`🚀 Application is running on: http://localhost:${port}`, 'Bootstrap');
 }

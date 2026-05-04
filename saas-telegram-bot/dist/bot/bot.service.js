@@ -21,6 +21,63 @@ const session_service_1 = require("../session/session.service");
 const groups_service_1 = require("../groups/groups.service");
 const messages_service_1 = require("../messages/messages.service");
 const schedule_service_1 = require("../schedule/schedule.service");
+const MAIN_MENU = telegraf_1.Markup.inlineKeyboard([
+    [
+        telegraf_1.Markup.button.callback('📊 حالة حسابي', 'status'),
+        telegraf_1.Markup.button.callback('🔑 تفعيل الاشتراك', 'activate'),
+    ],
+    [
+        telegraf_1.Markup.button.callback('📱 ربط الحساب', 'connect'),
+        telegraf_1.Markup.button.callback('🔌 فصل الحساب', 'disconnect'),
+    ],
+    [
+        telegraf_1.Markup.button.callback('👥 المجموعات', 'menu_groups'),
+        telegraf_1.Markup.button.callback('💬 الرسائل', 'menu_messages'),
+    ],
+    [telegraf_1.Markup.button.callback('⏱ جدول الإرسال', 'menu_schedule')],
+]);
+const ADMIN_MENU = telegraf_1.Markup.inlineKeyboard([
+    [
+        telegraf_1.Markup.button.callback('📊 إحصائيات النظام', 'admin_stats'),
+        telegraf_1.Markup.button.callback('👥 جميع المستخدمين', 'admin_all_users'),
+    ],
+    [
+        telegraf_1.Markup.button.callback('🎟 توليد كود واحد', 'admin_gen_code'),
+        telegraf_1.Markup.button.callback('🎟🎟 توليد عدة أكواد', 'admin_gen_codes'),
+    ],
+    [
+        telegraf_1.Markup.button.callback('✅ تفعيل مستخدم', 'admin_unban'),
+        telegraf_1.Markup.button.callback('🚫 إيقاف مستخدم', 'admin_ban'),
+    ],
+    [telegraf_1.Markup.button.callback('🔍 بيانات مستخدم', 'admin_user_info')],
+    [telegraf_1.Markup.button.callback('🔙 القائمة الرئيسية', 'main_menu')],
+]);
+const GROUPS_MENU = telegraf_1.Markup.inlineKeyboard([
+    [
+        telegraf_1.Markup.button.callback('🔄 استيراد المجموعات', 'sync_groups'),
+        telegraf_1.Markup.button.callback('📋 قائمة مجموعاتي', 'my_groups'),
+    ],
+    [telegraf_1.Markup.button.callback('🔙 رجوع', 'main_menu')],
+]);
+const MESSAGES_MENU = telegraf_1.Markup.inlineKeyboard([
+    [
+        telegraf_1.Markup.button.callback('➕ إضافة رسالة', 'add_message'),
+        telegraf_1.Markup.button.callback('📋 رسائلي', 'my_messages'),
+    ],
+    [telegraf_1.Markup.button.callback('🔙 رجوع', 'main_menu')],
+]);
+const SCHEDULE_MENU = telegraf_1.Markup.inlineKeyboard([
+    [
+        telegraf_1.Markup.button.callback('⚙️ ضبط الجدول', 'set_schedule'),
+        telegraf_1.Markup.button.callback('📊 حالة الجدول', 'schedule_status'),
+    ],
+    [
+        telegraf_1.Markup.button.callback('▶️ تشغيل الإرسال', 'start_schedule'),
+        telegraf_1.Markup.button.callback('⏹ إيقاف الإرسال', 'stop_schedule'),
+    ],
+    [telegraf_1.Markup.button.callback('🔙 رجوع', 'main_menu')],
+]);
+const CANCEL_KB = telegraf_1.Markup.keyboard([['❌ إلغاء']]).oneTime().resize();
 let BotService = BotService_1 = class BotService {
     config;
     authService;
@@ -53,395 +110,370 @@ let BotService = BotService_1 = class BotService {
             process.env.HTTP_PROXY;
         let agent;
         if (proxyUrl) {
-            if (proxyUrl.startsWith('socks')) {
-                agent = new socks_proxy_agent_1.SocksProxyAgent(proxyUrl);
-                this.logger.log(`Using SOCKS proxy: ${proxyUrl}`);
-            }
-            else {
-                agent = new https_proxy_agent_1.HttpsProxyAgent(proxyUrl);
-                this.logger.log(`Using HTTPS proxy: ${proxyUrl}`);
-            }
+            agent = proxyUrl.startsWith('socks')
+                ? new socks_proxy_agent_1.SocksProxyAgent(proxyUrl)
+                : new https_proxy_agent_1.HttpsProxyAgent(proxyUrl);
+            this.logger.log(`Using proxy: ${proxyUrl}`);
         }
         this.bot = new telegraf_1.Telegraf(token, agent ? { telegram: { agent } } : {});
         this.registerHandlers();
-        void this.bot
-            .launch()
-            .then(() => {
-            this.logger.log(`🤖 Bot launched | Owner: ${this.ownerId}`);
-        })
-            .catch((err) => {
-            this.logger.error(`Cannot reach Telegram API (${err.message}). ` +
-                `If Telegram is blocked on your network, set HTTPS_PROXY in .env or use a VPN, then restart.`);
-        });
-        const stopBot = () => {
-            try {
-                this.bot?.stop('SIGTERM');
-            }
-            catch {
-            }
-        };
-        process.once('SIGINT', stopBot);
-        process.once('SIGTERM', stopBot);
+        void this.bot.launch()
+            .then(() => this.logger.log(`🤖 البوت يعمل | المالك: ${this.ownerId}`))
+            .catch((err) => this.logger.error(`تعذّر الاتصال بـ Telegram API: ${err.message}. ` +
+            'تأكد من الاتصال بالإنترنت أو استخدم VPN.'));
+        const stop = () => { try {
+            this.bot?.stop('SIGTERM');
+        }
+        catch { } };
+        process.once('SIGINT', stop);
+        process.once('SIGTERM', stop);
     }
     async onModuleDestroy() {
         try {
             this.bot?.stop('SIGTERM');
         }
-        catch {
-        }
+        catch { }
     }
-    isOwner(ctx) {
-        return ctx.from?.id === this.ownerId;
-    }
+    isOwner(ctx) { return ctx.from?.id === this.ownerId; }
     async checkOwner(ctx) {
         if (!this.isOwner(ctx)) {
-            await ctx.reply('⛔ This command is restricted to the bot owner.');
+            await ctx.answerCbQuery?.('⛔ هذا الأمر للمالك فقط').catch(() => null);
+            await ctx.reply('⛔ هذا الأمر مخصص للمالك فقط.');
             return false;
         }
         return true;
     }
     async checkActive(ctx) {
-        const isActive = await this.authService.isUserActive(ctx.from.id.toString());
-        if (!isActive) {
-            await ctx.reply('❌ Your subscription is inactive.\nUse /activate <code> to activate.');
+        const active = await this.authService.isUserActive(ctx.from.id.toString());
+        if (!active) {
+            const msg = '❌ اشتراكك غير مفعّل.\nاضغط على زر *تفعيل الاشتراك* أو أرسل:\n`/activate <الكود>`';
+            await ctx.replyWithMarkdown(msg);
             return false;
         }
         return true;
     }
+    tid(ctx) { return ctx.from.id.toString(); }
+    async safeEdit(ctx, text, extra) {
+        try {
+            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
+        }
+        catch {
+            await ctx.replyWithMarkdown(text, extra);
+        }
+    }
     registerHandlers() {
-        this.registerUserCommands();
-        this.registerAdminCommands();
+        this.registerStartHelp();
+        this.registerCallbacks();
+        this.registerCommands();
         this.registerTextHandler();
         this.registerPhotoHandler();
-        this.bot.catch((err, ctx) => {
-            this.logger.error(`Bot error for ${ctx.updateType}:`, err);
-        });
+        this.bot.catch((err, ctx) => this.logger.error(`Bot error ${ctx.updateType}:`, err));
     }
-    registerUserCommands() {
+    registerStartHelp() {
         this.bot.start(async (ctx) => {
             const { id, username, first_name } = ctx.from;
             await this.authService.findOrCreateUser(id.toString(), username, first_name);
             const status = await this.authService.getUserStatus(id.toString());
-            const isOwner = id === this.ownerId;
-            await ctx.replyWithMarkdown(`👋 Welcome *${first_name ?? 'there'}*!` +
-                (isOwner ? ' 👑 *(Owner)*' : '') +
-                `\n\n` +
-                `📊 *Status:* ${status.is_active ? '✅ Active' : '❌ Inactive'}\n` +
+            const owner = id === this.ownerId;
+            const greeting = `👋 أهلاً *${first_name ?? 'بك'}*${owner ? ' 👑' : ''}!\n\n` +
+                `📊 *الحالة:* ${status.is_active ? '✅ مفعّل' : '❌ غير مفعّل'}\n` +
                 (status.subscription_end
-                    ? `📅 Until: ${new Date(status.subscription_end).toLocaleDateString()}\n`
+                    ? `📅 *ينتهي:* ${new Date(status.subscription_end).toLocaleDateString('ar-IQ')}\n`
                     : '') +
-                `\nUse /help to see all commands.`);
+                `\nاختر من القائمة أدناه:`;
+            const kb = owner
+                ? telegraf_1.Markup.inlineKeyboard([
+                    ...MAIN_MENU.reply_markup.inline_keyboard,
+                    [telegraf_1.Markup.button.callback('👑 لوحة الإدارة', 'admin_panel')],
+                ])
+                : MAIN_MENU;
+            await ctx.replyWithMarkdown(greeting, kb);
         });
         this.bot.help(async (ctx) => {
-            const isOwner = ctx.from?.id === this.ownerId;
-            let text = `*📋 Commands*\n\n` +
-                `*Account*\n` +
-                `/activate <code> — Activate subscription\n` +
-                `/status — View account info\n\n` +
-                `*MTProto*\n` +
-                `/connect — Link your Telegram account\n` +
-                `/disconnect — Unlink session\n` +
-                `/session\\_status — Check session\n\n` +
-                `*Groups*\n` +
-                `/sync\\_groups — Import your groups\n` +
-                `/my\\_groups — List groups\n\n` +
-                `*Messages*\n` +
-                `/add\\_message — Add text or media message\n` +
-                `/my\\_messages — List messages\n` +
-                `/del\\_message <id> — Delete a message\n\n` +
-                `*Schedule*\n` +
-                `/set\\_schedule <sec> [global|sequential]\n` +
-                `/start\\_schedule — Begin auto-send\n` +
-                `/stop\\_schedule — Stop auto-send\n` +
-                `/schedule\\_status — Scheduler info`;
-            if (isOwner) {
-                text +=
-                    `\n\n*👑 Admin Commands*\n` +
-                        `/gen\\_code <days> — Generate activation code\n` +
-                        `/gen\\_codes <days> <count> — Generate multiple codes\n` +
-                        `/all\\_users — List all registered users\n` +
-                        `/user\\_info <telegram\\_id> — User details\n` +
-                        `/ban\\_user <telegram\\_id> — Deactivate a user\n` +
-                        `/unban\\_user <telegram\\_id> — Reactivate a user\n` +
-                        `/stats — System statistics`;
-            }
-            await ctx.replyWithMarkdown(text);
+            await ctx.replyWithMarkdown(`*📋 القائمة الرئيسية*\n\nاضغط على الأزرار أدناه للتنقل بين الأقسام.`, MAIN_MENU);
         });
+    }
+    registerCallbacks() {
+        this.bot.action('main_menu', async (ctx) => {
+            await ctx.answerCbQuery();
+            const owner = ctx.from?.id === this.ownerId;
+            const kb = owner
+                ? telegraf_1.Markup.inlineKeyboard([
+                    ...MAIN_MENU.reply_markup.inline_keyboard,
+                    [telegraf_1.Markup.button.callback('👑 لوحة الإدارة', 'admin_panel')],
+                ])
+                : MAIN_MENU;
+            await this.safeEdit(ctx, '🏠 *القائمة الرئيسية*\n\nاختر قسماً:', kb);
+        });
+        this.bot.action('menu_groups', async (ctx) => {
+            await ctx.answerCbQuery();
+            await this.safeEdit(ctx, '👥 *إدارة المجموعات*\n\nاختر العملية المطلوبة:', GROUPS_MENU);
+        });
+        this.bot.action('menu_messages', async (ctx) => {
+            await ctx.answerCbQuery();
+            await this.safeEdit(ctx, '💬 *إدارة الرسائل*\n\nاختر العملية المطلوبة:', MESSAGES_MENU);
+        });
+        this.bot.action('menu_schedule', async (ctx) => {
+            await ctx.answerCbQuery();
+            await this.safeEdit(ctx, '⏱ *جدول الإرسال التلقائي*\n\nاختر العملية المطلوبة:', SCHEDULE_MENU);
+        });
+        this.bot.action('admin_panel', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            await this.safeEdit(ctx, '👑 *لوحة الإدارة*\n\nاختر العملية:', ADMIN_MENU);
+        });
+        this.bot.action('status', async (ctx) => {
+            await ctx.answerCbQuery();
+            const s = await this.authService.getUserStatus(this.tid(ctx));
+            if (!s.registered) {
+                await ctx.reply('❌ لم تسجّل بعد. أرسل /start');
+                return;
+            }
+            const text = `*📊 حالة الحساب*\n\n` +
+                `الحالة: ${s.is_active ? '✅ مفعّل' : '❌ غير مفعّل'}\n` +
+                `الاشتراك: ${s.subscription_end ? new Date(s.subscription_end).toLocaleDateString('ar-IQ') : 'لا يوجد'}\n` +
+                `الجلسة: ${s.session_status === 'connected' ? '🟢 متصل' : '🔴 غير متصل'}\n` +
+                `المجموعات: ${s.groups_count}\n` +
+                `الرسائل: ${s.messages_count}`;
+            await this.safeEdit(ctx, text, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 رجوع', 'main_menu')]]));
+        });
+        this.bot.action('activate', async (ctx) => {
+            await ctx.answerCbQuery();
+            this.pendingStates.set(ctx.from.id, { step: 'activate_code' });
+            await ctx.reply('🔑 أرسل كود التفعيل الآن:', CANCEL_KB);
+        });
+        this.bot.action('connect', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'phone' });
+            await ctx.reply('📱 أرسل رقم هاتفك مع رمز الدولة:\nمثال: +9647801234567', CANCEL_KB);
+        });
+        this.bot.action('disconnect', async (ctx) => {
+            await ctx.answerCbQuery();
+            try {
+                const r = await this.sessionService.disconnectSession(this.tid(ctx));
+                await ctx.reply(r.message, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 القائمة', 'main_menu')]]));
+            }
+            catch (e) {
+                await ctx.reply(`❌ ${e.message}`);
+            }
+        });
+        this.bot.action('sync_groups', async (ctx) => {
+            await ctx.answerCbQuery('⏳ جاري الاستيراد...');
+            if (!(await this.checkActive(ctx)))
+                return;
+            try {
+                await ctx.reply('⏳ جاري استيراد مجموعاتك...');
+                const r = await this.groupsService.fetchAndSyncGroups(this.tid(ctx));
+                await ctx.reply(`✅ ${r.message}`, GROUPS_MENU);
+            }
+            catch (e) {
+                await ctx.reply(`❌ ${e.message}`, GROUPS_MENU);
+            }
+        });
+        this.bot.action('my_groups', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            const groups = await this.groupsService.getGroups(this.tid(ctx));
+            if (!groups.length) {
+                await ctx.reply('لا توجد مجموعات. اضغط *استيراد المجموعات* أولاً.', GROUPS_MENU);
+                return;
+            }
+            const list = groups
+                .map((g, i) => `${i + 1}. ${g.is_active ? '✅' : '❌'} *${g.group_name}*`)
+                .join('\n');
+            await ctx.replyWithMarkdown(`*📋 مجموعاتك (${groups.length}):*\n\n${list}`, GROUPS_MENU);
+        });
+        this.bot.action('add_message', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'message_content' });
+            await ctx.reply('📝 أرسل نص الرسالة الآن.\nأو أرسل صورة مع تعليق للرسالة الإعلامية:', CANCEL_KB);
+        });
+        this.bot.action('my_messages', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            const msgs = await this.messagesService.getMessages(this.tid(ctx));
+            if (!msgs.length) {
+                await ctx.reply('لا توجد رسائل بعد. اضغط *إضافة رسالة*.', MESSAGES_MENU);
+                return;
+            }
+            const list = msgs
+                .map((m) => `[${m.id}] ${m.type === 'media' ? '🖼' : '📝'} ${(m.content ?? '').substring(0, 50)}`)
+                .join('\n');
+            const delButtons = msgs.slice(0, 10).map((m) => telegraf_1.Markup.button.callback(`🗑 حذف [${m.id}]`, `del_msg_${m.id}`));
+            const rows = [];
+            for (let i = 0; i < delButtons.length; i += 2) {
+                rows.push(delButtons.slice(i, i + 2));
+            }
+            rows.push([telegraf_1.Markup.button.callback('🔙 رجوع', 'menu_messages')]);
+            await ctx.replyWithMarkdown(`*💬 رسائلك (${msgs.length}):*\n\n\`\`\`\n${list}\n\`\`\``, telegraf_1.Markup.inlineKeyboard(rows));
+        });
+        this.bot.action(/^del_msg_(\d+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            const msgId = parseInt(ctx.match[1]);
+            try {
+                await this.messagesService.deleteMessage(this.tid(ctx), msgId);
+                await ctx.reply(`✅ تم حذف الرسالة [${msgId}]`, MESSAGES_MENU);
+            }
+            catch (e) {
+                await ctx.reply(`❌ ${e.message}`);
+            }
+        });
+        this.bot.action('set_schedule', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'set_schedule_interval' });
+            await ctx.reply('⚙️ أرسل الإعداد بالصيغة التالية:\n`<ثواني> <global|sequential>`\n\nمثال:\n`3600 sequential` — كل ساعة بالتتابع\n`1800 global` — كل نصف ساعة للجميع', CANCEL_KB);
+        });
+        this.bot.action('schedule_status', async (ctx) => {
+            await ctx.answerCbQuery();
+            const s = await this.scheduleService.getScheduleStatus(this.tid(ctx));
+            if (!s.configured) {
+                await ctx.reply('لم يُضبط جدول بعد. اضغط *ضبط الجدول*.', SCHEDULE_MENU);
+                return;
+            }
+            await ctx.replyWithMarkdown(`*⏱ حالة الجدول*\n\n` +
+                `التشغيل: ${s.is_running ? '✅ يعمل' : '❌ متوقف'}\n` +
+                `الفترة: كل ${s.interval} ثانية\n` +
+                `الوضع: ${s.mode === 'sequential' ? '🔁 تتابعي' : '📢 للجميع'}\n` +
+                `آخر إرسال: ${s.last_run_at ? new Date(s.last_run_at).toLocaleString('ar-IQ') : 'لا يوجد'}`, SCHEDULE_MENU);
+        });
+        this.bot.action('start_schedule', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            try {
+                const r = await this.scheduleService.startSchedule(this.tid(ctx));
+                await ctx.reply(`▶️ ${r.message}`, SCHEDULE_MENU);
+            }
+            catch (e) {
+                await ctx.reply(`❌ ${e.message}`, SCHEDULE_MENU);
+            }
+        });
+        this.bot.action('stop_schedule', async (ctx) => {
+            await ctx.answerCbQuery();
+            try {
+                const r = await this.scheduleService.stopSchedule(this.tid(ctx));
+                await ctx.reply(`⏹ ${r.message}`, SCHEDULE_MENU);
+            }
+            catch (e) {
+                await ctx.reply(`❌ ${e.message}`, SCHEDULE_MENU);
+            }
+        });
+        this.bot.action('admin_stats', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            const s = await this.authService.getSystemStats();
+            await ctx.replyWithMarkdown(`*📊 إحصائيات النظام*\n\n` +
+                `👥 إجمالي المستخدمين: *${s.totalUsers}*\n` +
+                `✅ اشتراكات نشطة: *${s.activeUsers}*\n` +
+                `❌ غير نشط: *${s.inactiveUsers}*\n` +
+                `🎟 إجمالي الأكواد: *${s.totalCodes}*\n` +
+                `🔓 مستخدمة: *${s.usedCodes}*\n` +
+                `🔒 متبقية: *${s.unusedCodes}*\n` +
+                `💬 الرسائل: *${s.totalMessages}*\n` +
+                `👥 المجموعات: *${s.totalGroups}*`, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 لوحة الإدارة', 'admin_panel')]]));
+        });
+        this.bot.action('admin_all_users', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            const users = await this.authService.getAllUsers();
+            if (!users.length) {
+                await ctx.reply('لا يوجد مستخدمون بعد.');
+                return;
+            }
+            const now = new Date();
+            const list = users.map((u, i) => {
+                const active = u.is_active && u.subscription_end && u.subscription_end > now;
+                const exp = u.subscription_end ? new Date(u.subscription_end).toLocaleDateString('ar-IQ') : 'لا يوجد';
+                return `${i + 1}. ${active ? '✅' : '❌'} *${u.first_name ?? u.username ?? 'N/A'}*\n   🆔 \`${u.telegram_id}\` | ينتهي: ${exp}`;
+            }).join('\n\n');
+            await ctx.replyWithMarkdown(`*👥 المستخدمون (${users.length}):*\n\n${list}`, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 لوحة الإدارة', 'admin_panel')]]));
+        });
+        this.bot.action('admin_gen_code', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'admin_gen_code' });
+            await ctx.reply('🎟 أرسل عدد أيام الاشتراك:\nمثال: `30`', CANCEL_KB);
+        });
+        this.bot.action('admin_gen_codes', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'admin_gen_codes' });
+            await ctx.reply('🎟🎟 أرسل عدد الأيام والكمية:\nمثال: `30 5` (30 يوماً، 5 أكواد)', CANCEL_KB);
+        });
+        this.bot.action('admin_user_info', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'admin_user_info' });
+            await ctx.reply('🔍 أرسل Telegram ID للمستخدم:', CANCEL_KB);
+        });
+        this.bot.action('admin_ban', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'admin_ban' });
+            await ctx.reply('🚫 أرسل Telegram ID للمستخدم المراد إيقافه:', CANCEL_KB);
+        });
+        this.bot.action('admin_unban', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkOwner(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'admin_unban' });
+            await ctx.reply('✅ أرسل Telegram ID للمستخدم المراد تفعيله:', CANCEL_KB);
+        });
+    }
+    registerCommands() {
         this.bot.command('activate', async (ctx) => {
             const parts = ctx.message.text.split(' ');
-            if (parts.length < 2)
-                return ctx.reply('Usage: /activate <code>');
+            if (parts.length < 2) {
+                this.pendingStates.set(ctx.from.id, { step: 'activate_code' });
+                return ctx.reply('🔑 أرسل كود التفعيل الآن:', CANCEL_KB);
+            }
             try {
-                const result = await this.authService.activateWithCode(ctx.from.id.toString(), parts[1].trim());
-                await ctx.reply(result.message);
+                const r = await this.authService.activateWithCode(this.tid(ctx), parts[1].trim());
+                await ctx.reply(r.message, MAIN_MENU);
             }
             catch (e) {
                 await ctx.reply(`❌ ${e.message}`);
             }
         });
         this.bot.command('status', async (ctx) => {
-            const status = await this.authService.getUserStatus(ctx.from.id.toString());
-            if (!status.registered)
-                return ctx.reply('Not registered. Send /start first.');
-            await ctx.replyWithMarkdown(`*📊 Account Status*\n\n` +
-                `Active: ${status.is_active ? '✅' : '❌'}\n` +
-                `Subscription: ${status.subscription_end ? new Date(status.subscription_end).toLocaleDateString() : 'None'}\n` +
-                `Session: ${status.session_status}\n` +
-                `Groups: ${status.groups_count}\n` +
-                `Messages: ${status.messages_count}`);
+            const s = await this.authService.getUserStatus(this.tid(ctx));
+            if (!s.registered)
+                return ctx.reply('❌ أرسل /start أولاً.');
+            await ctx.replyWithMarkdown(`*📊 حالة الحساب*\n\n` +
+                `الحالة: ${s.is_active ? '✅ مفعّل' : '❌ غير مفعّل'}\n` +
+                `الاشتراك: ${s.subscription_end ? new Date(s.subscription_end).toLocaleDateString('ar-IQ') : 'لا يوجد'}\n` +
+                `الجلسة: ${s.session_status === 'connected' ? '🟢 متصل' : '🔴 غير متصل'}\n` +
+                `المجموعات: ${s.groups_count}\n` +
+                `الرسائل: ${s.messages_count}`, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 القائمة', 'main_menu')]]));
         });
-        this.bot.command('connect', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            this.pendingStates.set(ctx.from.id, { step: 'phone' });
-            await ctx.reply('📱 Enter your phone number with country code:\nExample: +9647801234567');
-        });
-        this.bot.command('disconnect', async (ctx) => {
-            try {
-                const result = await this.sessionService.disconnectSession(ctx.from.id.toString());
-                await ctx.reply(result.message);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('session_status', async (ctx) => {
-            const s = await this.sessionService.getSessionStatus(ctx.from.id.toString());
-            await ctx.reply(`🔌 ${s}`);
-        });
-        this.bot.command('sync_groups', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            try {
-                await ctx.reply('⏳ Syncing groups...');
-                const result = await this.groupsService.fetchAndSyncGroups(ctx.from.id.toString());
-                await ctx.reply(result.message);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('my_groups', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            const groups = await this.groupsService.getGroups(ctx.from.id.toString());
-            if (!groups.length)
-                return ctx.reply('No groups yet. Use /sync_groups first.');
-            const list = groups
-                .map((g, i) => `${i + 1}. ${g.is_active ? '✅' : '❌'} *${g.group_name}*\n   ID: \`${g.group_id}\``)
-                .join('\n\n');
-            await ctx.replyWithMarkdown(`*📋 Groups (${groups.length}):*\n\n${list}`);
-        });
-        this.bot.command('add_message', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            this.pendingStates.set(ctx.from.id, { step: 'message_content', type: 'text' });
-            await ctx.reply('📝 Send your message text now.\nOr send a photo/document with caption for media.', telegraf_1.Markup.keyboard([['❌ Cancel']]).oneTime().resize());
-        });
-        this.bot.command('my_messages', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            const messages = await this.messagesService.getMessages(ctx.from.id.toString());
-            if (!messages.length)
-                return ctx.reply('No messages yet. Use /add_message.');
-            const list = messages
-                .map((m) => `[${m.id}] ${m.type === 'media' ? '🖼' : '📝'} ${(m.content ?? '').substring(0, 50)}`)
-                .join('\n');
-            await ctx.replyWithMarkdown(`*💬 Messages (${messages.length}):*\n\n\`\`\`\n${list}\n\`\`\``);
-        });
-        this.bot.command('del_message', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            const parts = ctx.message.text.split(' ');
-            if (parts.length < 2 || isNaN(parseInt(parts[1]))) {
-                return ctx.reply('Usage: /del_message <id>');
-            }
-            try {
-                const result = await this.messagesService.deleteMessage(ctx.from.id.toString(), parseInt(parts[1]));
-                await ctx.reply(result.message);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('set_schedule', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            const parts = ctx.message.text.split(' ');
-            if (parts.length < 2 || isNaN(parseInt(parts[1]))) {
-                return ctx.reply('Usage: /set_schedule <seconds> [global|sequential]\n' +
-                    'Example: /set_schedule 3600 sequential');
-            }
-            const interval = parseInt(parts[1]);
-            const mode = (parts[2] === 'sequential' ? 'sequential' : 'global');
-            try {
-                await this.scheduleService.createSchedule(ctx.from.id.toString(), interval, mode);
-                await ctx.reply(`✅ Schedule set!\n⏱ Every: ${interval}s\n🔄 Mode: ${mode}\n\nRun /start_schedule to begin.`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('start_schedule', async (ctx) => {
-            if (!(await this.checkActive(ctx)))
-                return;
-            try {
-                const result = await this.scheduleService.startSchedule(ctx.from.id.toString());
-                await ctx.reply(result.message);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('stop_schedule', async (ctx) => {
-            try {
-                const result = await this.scheduleService.stopSchedule(ctx.from.id.toString());
-                await ctx.reply(result.message);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('schedule_status', async (ctx) => {
-            const s = await this.scheduleService.getScheduleStatus(ctx.from.id.toString());
-            if (!s.configured)
-                return ctx.reply('No schedule configured. Use /set_schedule first.');
-            await ctx.replyWithMarkdown(`*⏱ Schedule*\n\n` +
-                `Running: ${s.is_running ? '✅' : '❌'}\n` +
-                `Interval: ${s.interval}s\n` +
-                `Mode: ${s.mode}\n` +
-                `Last run: ${s.last_run_at ? new Date(s.last_run_at).toLocaleString() : 'Never'}`);
-        });
-    }
-    registerAdminCommands() {
-        this.bot.command('gen_code', async (ctx) => {
+        this.bot.command('admin', async (ctx) => {
             if (!(await this.checkOwner(ctx)))
                 return;
-            const parts = ctx.message.text.split(' ');
-            if (parts.length < 2 || isNaN(parseInt(parts[1]))) {
-                return ctx.reply('Usage: /gen_code <days>\nExample: /gen_code 30');
-            }
-            const days = parseInt(parts[1]);
-            try {
-                const code = await this.authService.generateActivationCode(days);
-                await ctx.replyWithMarkdown(`✅ *Activation Code Generated*\n\n` +
-                    `Code: \`${code}\`\n` +
-                    `Duration: *${days} days*\n\n` +
-                    `Share this code with the subscriber.`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('gen_codes', async (ctx) => {
-            if (!(await this.checkOwner(ctx)))
-                return;
-            const parts = ctx.message.text.split(' ');
-            if (parts.length < 3 || isNaN(parseInt(parts[1])) || isNaN(parseInt(parts[2]))) {
-                return ctx.reply('Usage: /gen_codes <days> <count>\nExample: /gen_codes 30 5');
-            }
-            const days = parseInt(parts[1]);
-            const count = Math.min(parseInt(parts[2]), 20);
-            try {
-                const codes = [];
-                for (let i = 0; i < count; i++) {
-                    codes.push(await this.authService.generateActivationCode(days));
-                }
-                const list = codes.map((c, i) => `${i + 1}. \`${c}\``).join('\n');
-                await ctx.replyWithMarkdown(`✅ *${count} Codes Generated (${days} days each)*\n\n${list}`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('all_users', async (ctx) => {
-            if (!(await this.checkOwner(ctx)))
-                return;
-            try {
-                const users = await this.authService.getAllUsers();
-                if (!users.length)
-                    return ctx.reply('No users yet.');
-                const now = new Date();
-                const list = users
-                    .map((u, i) => {
-                    const active = u.is_active && u.subscription_end && u.subscription_end > now;
-                    const exp = u.subscription_end ? new Date(u.subscription_end).toLocaleDateString() : 'None';
-                    return `${i + 1}. ${active ? '✅' : '❌'} *${u.first_name ?? u.username ?? 'N/A'}*\n   ID: \`${u.telegram_id}\` | Until: ${exp}`;
-                })
-                    .join('\n\n');
-                await ctx.replyWithMarkdown(`*👥 All Users (${users.length}):*\n\n${list}`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('user_info', async (ctx) => {
-            if (!(await this.checkOwner(ctx)))
-                return;
-            const parts = ctx.message.text.split(' ');
-            if (parts.length < 2)
-                return ctx.reply('Usage: /user_info <telegram_id>');
-            try {
-                const info = await this.authService.getUserStatus(parts[1].trim());
-                if (!info.registered)
-                    return ctx.reply('User not found.');
-                await ctx.replyWithMarkdown(`*👤 User Info*\n\n` +
-                    `Active: ${info.is_active ? '✅' : '❌'}\n` +
-                    `Subscription: ${info.subscription_end ? new Date(info.subscription_end).toLocaleDateString() : 'None'}\n` +
-                    `Session: ${info.session_status}\n` +
-                    `Groups: ${info.groups_count}\n` +
-                    `Messages: ${info.messages_count}`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('ban_user', async (ctx) => {
-            if (!(await this.checkOwner(ctx)))
-                return;
-            const parts = ctx.message.text.split(' ');
-            if (parts.length < 2)
-                return ctx.reply('Usage: /ban_user <telegram_id>');
-            try {
-                await this.authService.setUserActive(parts[1].trim(), false);
-                await ctx.reply(`✅ User ${parts[1]} has been deactivated.`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
-        });
-        this.bot.command('unban_user', async (ctx) => {
-            if (!(await this.checkOwner(ctx)))
-                return;
-            const parts = ctx.message.text.split(' ');
-            if (parts.length < 2)
-                return ctx.reply('Usage: /unban_user <telegram_id>');
-            try {
-                await this.authService.setUserActive(parts[1].trim(), true);
-                await ctx.reply(`✅ User ${parts[1]} has been reactivated.`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
+            await ctx.replyWithMarkdown('👑 *لوحة الإدارة*', ADMIN_MENU);
         });
         this.bot.command('stats', async (ctx) => {
             if (!(await this.checkOwner(ctx)))
                 return;
-            try {
-                const stats = await this.authService.getSystemStats();
-                await ctx.replyWithMarkdown(`*📊 System Statistics*\n\n` +
-                    `👥 Total Users: *${stats.totalUsers}*\n` +
-                    `✅ Active Subscriptions: *${stats.activeUsers}*\n` +
-                    `❌ Inactive: *${stats.inactiveUsers}*\n` +
-                    `🎟 Total Codes: *${stats.totalCodes}*\n` +
-                    `🔓 Used Codes: *${stats.usedCodes}*\n` +
-                    `🔒 Unused Codes: *${stats.unusedCodes}*\n` +
-                    `💬 Total Messages: *${stats.totalMessages}*\n` +
-                    `👥 Total Groups: *${stats.totalGroups}*`);
-            }
-            catch (e) {
-                await ctx.reply(`❌ ${e.message}`);
-            }
+            const s = await this.authService.getSystemStats();
+            await ctx.replyWithMarkdown(`*📊 إحصائيات النظام*\n\n` +
+                `👥 المستخدمون: *${s.totalUsers}* (نشط: ${s.activeUsers})\n` +
+                `🎟 الأكواد: *${s.totalCodes}* (متبقي: ${s.unusedCodes})\n` +
+                `💬 الرسائل: *${s.totalMessages}* | المجموعات: *${s.totalGroups}*`, ADMIN_MENU);
         });
     }
     registerTextHandler() {
@@ -449,49 +481,161 @@ let BotService = BotService_1 = class BotService {
             const state = this.pendingStates.get(ctx.from.id);
             if (!state)
                 return;
-            if (ctx.message.text === '❌ Cancel') {
+            const text = ctx.message.text.trim();
+            if (text === '❌ إلغاء') {
                 this.pendingStates.delete(ctx.from.id);
-                return ctx.reply('Cancelled.', telegraf_1.Markup.removeKeyboard());
+                return ctx.reply('✅ تم الإلغاء.', telegraf_1.Markup.removeKeyboard());
             }
-            if (state.step === 'phone') {
-                const phone = ctx.message.text.trim();
+            if (state.step === 'activate_code') {
                 try {
-                    const result = await this.sessionService.connectWithPhone(ctx.from.id.toString(), phone);
-                    this.pendingStates.set(ctx.from.id, { step: 'otp', phone });
-                    await ctx.reply(result.message, telegraf_1.Markup.removeKeyboard());
+                    const r = await this.authService.activateWithCode(this.tid(ctx), text);
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.reply(r.message, { ...telegraf_1.Markup.removeKeyboard(), ...MAIN_MENU });
                 }
                 catch (e) {
                     this.pendingStates.delete(ctx.from.id);
-                    await ctx.reply(`❌ ${e.message}`);
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                return;
+            }
+            if (state.step === 'phone') {
+                try {
+                    const r = await this.sessionService.connectWithPhone(this.tid(ctx), text);
+                    this.pendingStates.set(ctx.from.id, { step: 'otp', phone: text });
+                    await ctx.reply(`📨 ${r.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                catch (e) {
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
                 }
                 return;
             }
             if (state.step === 'otp') {
-                const code = ctx.message.text.trim();
                 try {
-                    const result = await this.sessionService.verifyCode(ctx.from.id.toString(), code);
+                    const r = await this.sessionService.verifyCode(this.tid(ctx), text);
                     this.pendingStates.delete(ctx.from.id);
-                    await ctx.reply(result.message);
+                    await ctx.reply(`✅ ${r.message}`, { ...telegraf_1.Markup.removeKeyboard(), ...MAIN_MENU });
                 }
                 catch (e) {
                     this.pendingStates.delete(ctx.from.id);
-                    await ctx.reply(`❌ ${e.message}`);
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
                 }
                 return;
             }
             if (state.step === 'message_content') {
                 try {
-                    const msg = await this.messagesService.createMessage(ctx.from.id.toString(), {
+                    const msg = await this.messagesService.createMessage(this.tid(ctx), {
                         type: 'text',
-                        content: ctx.message.text,
+                        content: text,
                     });
                     this.pendingStates.delete(ctx.from.id);
-                    await ctx.reply(`✅ Message saved (ID: ${msg.id})`, telegraf_1.Markup.removeKeyboard());
+                    await ctx.reply(`✅ تم حفظ الرسالة (رقم: ${msg.id})`, {
+                        ...telegraf_1.Markup.removeKeyboard(),
+                        ...MESSAGES_MENU,
+                    });
                 }
                 catch (e) {
                     this.pendingStates.delete(ctx.from.id);
-                    await ctx.reply(`❌ ${e.message}`);
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
                 }
+                return;
+            }
+            if (state.step === 'set_schedule_interval') {
+                const parts = text.split(' ');
+                const interval = parseInt(parts[0]);
+                if (isNaN(interval)) {
+                    await ctx.reply('❌ صيغة خاطئة. مثال: `3600 sequential`');
+                    return;
+                }
+                const mode = (parts[1] === 'sequential' ? 'sequential' : 'global');
+                try {
+                    await this.scheduleService.createSchedule(this.tid(ctx), interval, mode);
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.reply(`✅ تم ضبط الجدول!\n⏱ كل ${interval} ثانية\n🔄 الوضع: ${mode === 'sequential' ? 'تتابعي' : 'للجميع'}`, { ...telegraf_1.Markup.removeKeyboard(), ...SCHEDULE_MENU });
+                }
+                catch (e) {
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                return;
+            }
+            if (state.step === 'admin_gen_code') {
+                const days = parseInt(text);
+                if (isNaN(days)) {
+                    await ctx.reply('❌ أدخل رقماً صحيحاً.');
+                    return;
+                }
+                try {
+                    const code = await this.authService.generateActivationCode(days);
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.replyWithMarkdown(`✅ *كود التفعيل:*\n\`${code}\`\n⏳ المدة: *${days} يوم*`, { ...telegraf_1.Markup.removeKeyboard(), ...ADMIN_MENU });
+                }
+                catch (e) {
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                return;
+            }
+            if (state.step === 'admin_gen_codes') {
+                const parts = text.split(' ');
+                const days = parseInt(parts[0]);
+                const count = Math.min(parseInt(parts[1] ?? '1'), 20);
+                if (isNaN(days) || isNaN(count)) {
+                    await ctx.reply('❌ مثال: `30 5`');
+                    return;
+                }
+                try {
+                    const codes = [];
+                    for (let i = 0; i < count; i++)
+                        codes.push(await this.authService.generateActivationCode(days));
+                    const list = codes.map((c, i) => `${i + 1}. \`${c}\``).join('\n');
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.replyWithMarkdown(`✅ *${count} كود تفعيل (${days} يوم لكل كود):*\n\n${list}`, { ...telegraf_1.Markup.removeKeyboard(), ...ADMIN_MENU });
+                }
+                catch (e) {
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                return;
+            }
+            if (state.step === 'admin_user_info') {
+                try {
+                    const info = await this.authService.getUserStatus(text);
+                    this.pendingStates.delete(ctx.from.id);
+                    if (!info.registered) {
+                        await ctx.reply('❌ المستخدم غير موجود.');
+                        return;
+                    }
+                    await ctx.replyWithMarkdown(`*👤 بيانات المستخدم*\n\n` +
+                        `الحالة: ${info.is_active ? '✅ مفعّل' : '❌ غير مفعّل'}\n` +
+                        `الاشتراك: ${info.subscription_end ? new Date(info.subscription_end).toLocaleDateString('ar-IQ') : 'لا يوجد'}\n` +
+                        `الجلسة: ${info.session_status}\n` +
+                        `المجموعات: ${info.groups_count} | الرسائل: ${info.messages_count}`, { ...telegraf_1.Markup.removeKeyboard(), ...ADMIN_MENU });
+                }
+                catch (e) {
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                return;
+            }
+            if (state.step === 'admin_ban') {
+                try {
+                    await this.authService.setUserActive(text, false);
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.reply(`✅ تم إيقاف المستخدم ${text}`, { ...telegraf_1.Markup.removeKeyboard(), ...ADMIN_MENU });
+                }
+                catch (e) {
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                return;
+            }
+            if (state.step === 'admin_unban') {
+                try {
+                    await this.authService.setUserActive(text, true);
+                    this.pendingStates.delete(ctx.from.id);
+                    await ctx.reply(`✅ تم تفعيل المستخدم ${text}`, { ...telegraf_1.Markup.removeKeyboard(), ...ADMIN_MENU });
+                }
+                catch (e) {
+                    await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
+                }
+                return;
             }
         });
     }
@@ -503,17 +647,20 @@ let BotService = BotService_1 = class BotService {
             const photo = ctx.message.photo[ctx.message.photo.length - 1];
             const caption = ctx.message.caption ?? '';
             try {
-                const msg = await this.messagesService.createMessage(ctx.from.id.toString(), {
+                const msg = await this.messagesService.createMessage(this.tid(ctx), {
                     type: 'media',
                     content: caption,
                     file_id: photo.file_id,
                 });
                 this.pendingStates.delete(ctx.from.id);
-                await ctx.reply(`✅ Media message saved (ID: ${msg.id})`, telegraf_1.Markup.removeKeyboard());
+                await ctx.reply(`✅ تم حفظ الرسالة الإعلامية (رقم: ${msg.id})`, {
+                    ...telegraf_1.Markup.removeKeyboard(),
+                    ...MESSAGES_MENU,
+                });
             }
             catch (e) {
                 this.pendingStates.delete(ctx.from.id);
-                await ctx.reply(`❌ ${e.message}`);
+                await ctx.reply(`❌ ${e.message}`, telegraf_1.Markup.removeKeyboard());
             }
         });
     }
