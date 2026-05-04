@@ -24,6 +24,12 @@ type PendingState =
   | { step: 'admin_unban' }
   | null;
 
+type GroupImportDraft = {
+  candidates: { group_id: string; group_name: string }[];
+  selected: Set<number>;
+  page: number;
+};
+
 // ─── Inline Keyboards ───────────────────────────────────────────────────────
 
 const MAIN_MENU = Markup.inlineKeyboard([
@@ -70,8 +76,8 @@ const ADMIN_MENU = Markup.inlineKeyboard([
 
 const GROUPS_MENU = Markup.inlineKeyboard([
   [
-    Markup.button.callback('🔄 استيراد المجموعات', 'sync_groups'),
-    Markup.button.callback('📋 قائمة مجموعاتي', 'my_groups'),
+    Markup.button.callback('📥 جلب واختيار المجموعات', 'sync_groups'),
+    Markup.button.callback('📋 مجموعاتي (عرض/حذف)', 'my_groups'),
   ],
   [Markup.button.callback('➕ إضافة مجموعة بالمعرف (ID)', 'add_group_by_id')],
   [Markup.button.callback('🔙 رجوع', 'main_menu')],
@@ -104,6 +110,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotService.name);
   private bot: Telegraf;
   private pendingStates = new Map<number, PendingState>();
+  private groupImportDrafts = new Map<number, GroupImportDraft>();
+  private readonly GROUP_IMPORT_PAGE = 8;
+  /** عرض مجموعات المستخدم مع أزرار الحذف */
+  private readonly GROUPS_MANAGE_PAGE = 6;
   private ownerId: number;
   /** Telegraf `handlerTimeout` (ms) — stored for logging in catch */
   private handlerTimeoutMs = 600_000;
@@ -226,6 +236,102 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       if (this.isStaleCallbackError(err)) return;
       throw err;
     }
+  }
+
+  private truncateImportBtn(s: string, max: number): string {
+    const t = s.replace(/\n/g, ' ').trim();
+    return t.length <= max ? t : t.slice(0, max - 1) + '…';
+  }
+
+  /** يضبط draft.page ضمن النطاق ويعيد عدد الصفحات */
+  private clampGroupImportPage(d: GroupImportDraft): number {
+    const totalPages = Math.max(1, Math.ceil(d.candidates.length / this.GROUP_IMPORT_PAGE));
+    d.page = Math.min(Math.max(0, d.page), totalPages - 1);
+    return totalPages;
+  }
+
+  private groupImportPromptText(d: GroupImportDraft): string {
+    const totalPages = this.clampGroupImportPage(d);
+    return (
+      `📥 جلب المجموعات من حسابك المربوط\n\n` +
+      `اضغط على السطر للتحديد أو إلغاء التحديد، ثم «إضافة المحدد».\n` +
+      `المحدد: ${d.selected.size} من ${d.candidates.length} — صفحة ${d.page + 1}/${totalPages}`
+    );
+  }
+
+  private groupImportKeyboard(d: GroupImportDraft) {
+    const ps = this.GROUP_IMPORT_PAGE;
+    const totalPages = this.clampGroupImportPage(d);
+    const p = d.page;
+    const start = p * ps;
+    const slice = d.candidates.slice(start, start + ps);
+    type CB = ReturnType<typeof Markup.button.callback>;
+    const rows: CB[][] = [];
+
+    for (let i = 0; i < slice.length; i++) {
+      const gi = start + i;
+      const c = slice[i];
+      const mark = d.selected.has(gi) ? '✅' : '☐';
+      const label = `${mark} ${this.truncateImportBtn(c.group_name, 28)}`;
+      rows.push([Markup.button.callback(label, `gto_${gi}`)]);
+    }
+
+    const nav: CB[] = [];
+    if (p > 0) nav.push(Markup.button.callback('‹ السابق', `gpg_${p - 1}`));
+    if (p < totalPages - 1) nav.push(Markup.button.callback('التالي ›', `gpg_${p + 1}`));
+    if (nav.length) rows.push(nav);
+
+    rows.push([
+      Markup.button.callback('💾 إضافة المحدد', 'gisave'),
+      Markup.button.callback('❌ إلغاء', 'gican'),
+    ]);
+
+    return Markup.inlineKeyboard(rows);
+  }
+
+  private groupsManageListPayload(
+    groups: { id: number; group_id: string; group_name: string; is_active: boolean }[],
+    page: number,
+  ): { text: string; page: number; markup: ReturnType<typeof Markup.inlineKeyboard> } {
+    const PAGE = this.GROUPS_MANAGE_PAGE;
+    const n = groups.length;
+    const totalPages = Math.max(1, Math.ceil(n / PAGE));
+    const p = Math.min(Math.max(0, page), totalPages - 1);
+    const start = p * PAGE;
+    const slice = groups.slice(start, start + PAGE);
+
+    const lines = slice.map((g, i) => {
+      const num = start + i + 1;
+      const st = g.is_active ? '✅' : '❌';
+      const name = g.group_name.replace(/\n/g, ' ').trim() || 'بدون اسم';
+      return `${num}. ${st} ${name}\n   المعرف: ${g.group_id}`;
+    });
+
+    const header =
+      `📋 مجموعاتك (${n})\n\n` +
+      `🗑 اضغط «حذف» بجوار المجموعة لإزالتها من البوت فقط (لا يُلغي عضويتك فيها على Telegram).\n\n` +
+      `صفحة ${p + 1} من ${totalPages}\n\n`;
+
+    let text = header + lines.join('\n\n');
+    if (text.length > 4090) {
+      text = text.slice(0, 4087) + '…';
+    }
+
+    type CB = ReturnType<typeof Markup.button.callback>;
+    const rows: CB[][] = [];
+    for (const g of slice) {
+      const shortName = this.truncateImportBtn(g.group_name, 24);
+      rows.push([
+        Markup.button.callback(`🗑 حذف: ${shortName}`, `grp_del_${g.id}_p${p}`),
+      ]);
+    }
+    const nav: CB[] = [];
+    if (p > 0) nav.push(Markup.button.callback('‹ السابق', `grp_pg_${p - 1}`));
+    if (p < totalPages - 1) nav.push(Markup.button.callback('التالي ›', `grp_pg_${p + 1}`));
+    if (nav.length) rows.push(nav);
+    rows.push([Markup.button.callback('🔙 قائمة المجموعات', 'menu_groups')]);
+
+    return { text, page: p, markup: Markup.inlineKeyboard(rows) };
   }
 
   private async safeEdit(ctx: Context, text: string, extra?: object) {
@@ -445,15 +551,88 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     // ─── Groups ──────────────────────────────────────────────────────────────
     this.bot.action('sync_groups', async (ctx) => {
-      await this.answerCbSafe(ctx, '⏳ جاري الاستيراد...');
+      await this.answerCbSafe(ctx, '⏳ جاري الجلب...');
       if (!(await this.checkActive(ctx))) return;
+      const uid = ctx.from!.id;
       try {
-        await ctx.reply('⏳ جاري استيراد مجموعاتك...');
-        const r = await this.groupsService.fetchAndSyncGroups(this.tid(ctx));
+        const list = await this.groupsService.listDialogGroupsForImport(this.tid(ctx));
+        if (!list.length) {
+          await ctx.reply('لم يُعثر على مجموعات أو قنوات في حواراتك.', GROUPS_MENU);
+          return;
+        }
+        const draft: GroupImportDraft = { candidates: list, selected: new Set(), page: 0 };
+        this.groupImportDrafts.set(uid, draft);
+        await ctx.reply(this.groupImportPromptText(draft), {
+          ...this.groupImportKeyboard(draft),
+        });
+      } catch (e) {
+        await ctx.reply(`❌ ${this.errText(e)}`, GROUPS_MENU);
+      }
+    });
+
+    this.bot.action(/^gto_(\d+)$/, async (ctx) => {
+      await this.answerCbSafe(ctx);
+      const uid = ctx.from!.id;
+      const gi = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+      const draft = this.groupImportDrafts.get(uid);
+      if (!draft || !Number.isFinite(gi) || gi < 0 || gi >= draft.candidates.length) return;
+      if (draft.selected.has(gi)) draft.selected.delete(gi);
+      else draft.selected.add(gi);
+      try {
+        await ctx.editMessageText(this.groupImportPromptText(draft), {
+          ...this.groupImportKeyboard(draft),
+        });
+      } catch {
+        /* رسالة قديمة أو تعديل غير مسموح */
+      }
+    });
+
+    this.bot.action(/^gpg_(\d+)$/, async (ctx) => {
+      await this.answerCbSafe(ctx);
+      const uid = ctx.from!.id;
+      const newPage = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+      const draft = this.groupImportDrafts.get(uid);
+      if (!draft || !Number.isFinite(newPage) || newPage < 0) return;
+      draft.page = newPage;
+      this.clampGroupImportPage(draft);
+      try {
+        await ctx.editMessageText(this.groupImportPromptText(draft), {
+          ...this.groupImportKeyboard(draft),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    this.bot.action('gisave', async (ctx) => {
+      await this.answerCbSafe(ctx);
+      if (!(await this.checkActive(ctx))) return;
+      const uid = ctx.from!.id;
+      const draft = this.groupImportDrafts.get(uid);
+      if (!draft) {
+        await ctx.reply('انتهت جلسة الاستيراد. اضغط «جلب واختيار المجموعات» من جديد.', GROUPS_MENU);
+        return;
+      }
+      const selectedItems = [...draft.selected]
+        .sort((a, b) => a - b)
+        .map((i) => draft.candidates[i])
+        .filter(Boolean);
+      try {
+        const r = await this.groupsService.saveImportedGroupsSelection(this.tid(ctx), selectedItems);
+        this.groupImportDrafts.delete(uid);
+        await ctx.deleteMessage().catch(() => null);
         await ctx.reply(`✅ ${r.message}`, GROUPS_MENU);
       } catch (e) {
-        await ctx.reply(`❌ ${(e as Error).message}`, GROUPS_MENU);
+        await ctx.reply(`❌ ${this.errText(e)}`);
       }
+    });
+
+    this.bot.action('gican', async (ctx) => {
+      await this.answerCbSafe(ctx);
+      const uid = ctx.from!.id;
+      this.groupImportDrafts.delete(uid);
+      await ctx.deleteMessage().catch(() => null);
+      await ctx.reply('تم الإلغاء.', GROUPS_MENU);
     });
 
     this.bot.action('my_groups', async (ctx) => {
@@ -464,10 +643,53 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         await ctx.reply('لا توجد مجموعات. استوردها أو أضف واحدة بالمعرف.', GROUPS_MENU);
         return;
       }
-      const list = groups
-        .map((g, i) => `${i + 1}. ${g.is_active ? '✅' : '❌'} ${g.group_name} (ID: ${g.group_id})`)
-        .join('\n');
-      await ctx.reply(`📋 مجموعاتك (${groups.length}):\n\n${list}`, GROUPS_MENU);
+      const payload = this.groupsManageListPayload(groups, 0);
+      await ctx.reply(payload.text, { ...payload.markup });
+    });
+
+    this.bot.action(/^grp_pg_(\d+)$/, async (ctx) => {
+      await this.answerCbSafe(ctx);
+      if (!(await this.checkActive(ctx))) return;
+      const page = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+      if (!Number.isFinite(page) || page < 0) return;
+      const groups = await this.groupsService.getGroups(this.tid(ctx));
+      if (!groups.length) {
+        await ctx.deleteMessage().catch(() => null);
+        await ctx.reply('لا توجد مجموعات.', GROUPS_MENU);
+        return;
+      }
+      const payload = this.groupsManageListPayload(groups, page);
+      try {
+        await ctx.editMessageText(payload.text, { ...payload.markup });
+      } catch {
+        await ctx.reply(payload.text, { ...payload.markup });
+      }
+    });
+
+    this.bot.action(/^grp_del_(\d+)_p(\d+)$/, async (ctx) => {
+      await this.answerCbSafe(ctx, '🗑 جاري الحذف...');
+      if (!(await this.checkActive(ctx))) return;
+      const dbId = parseInt((ctx.match as RegExpMatchArray)[1], 10);
+      const fromPage = parseInt((ctx.match as RegExpMatchArray)[2], 10);
+      if (!Number.isFinite(dbId) || !Number.isFinite(fromPage)) return;
+      try {
+        await this.groupsService.deleteGroupByDbId(this.tid(ctx), dbId);
+      } catch (e) {
+        await ctx.reply(`❌ ${this.errText(e)}`);
+        return;
+      }
+      const groups = await this.groupsService.getGroups(this.tid(ctx));
+      if (!groups.length) {
+        await ctx.deleteMessage().catch(() => null);
+        await ctx.reply('✅ تم الحذف. لا توجد مجموعات أخرى في القائمة.', GROUPS_MENU);
+        return;
+      }
+      const payload = this.groupsManageListPayload(groups, fromPage);
+      try {
+        await ctx.editMessageText(payload.text, { ...payload.markup });
+      } catch {
+        await ctx.reply(`✅ تم الحذف.\n\n${payload.text}`, { ...payload.markup });
+      }
     });
 
     this.bot.action('add_group_by_id', async (ctx) => {

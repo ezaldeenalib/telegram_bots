@@ -15,6 +15,9 @@ export declare class BotService implements OnModuleInit, OnModuleDestroy {
     private readonly logger;
     private bot;
     private pendingStates;
+    private groupImportDrafts;
+    private readonly GROUP_IMPORT_PAGE;
+    private readonly GROUPS_MANAGE_PAGE;
     private ownerId;
     private handlerTimeoutMs;
     constructor(config: ConfigService, authService: AuthService, sessionService: SessionService, groupsService: GroupsService, messagesService: MessagesService, scheduleService: ScheduleService);
@@ -27,6 +30,11 @@ export declare class BotService implements OnModuleInit, OnModuleDestroy {
     private errText;
     private isStaleCallbackError;
     private answerCbSafe;
+    private truncateImportBtn;
+    private clampGroupImportPage;
+    private groupImportPromptText;
+    private groupImportKeyboard;
+    private groupsManageListPayload;
     private safeEdit;
     private registerHandlers;
     private registerStartHelp;

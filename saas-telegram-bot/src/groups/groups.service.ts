@@ -12,38 +12,67 @@ export class GroupsService {
     private readonly sessionService: SessionService,
   ) {}
 
-  async fetchAndSyncGroups(telegramId: string): Promise<{ synced: number; message: string }> {
+  /** يجلب المجموعات/القنوات من حوارات Telegram دون حفظ — للاختيار في البوت */
+  async listDialogGroupsForImport(
+    telegramId: string,
+    max = 80,
+  ): Promise<{ group_id: string; group_name: string }[]> {
     const client = await this.sessionService.getClient(telegramId);
     if (!client) {
-      throw new NotFoundException('No active MTProto session. Please connect first.');
+      throw new NotFoundException('لا توجد جلسة MTProto نشطة. اربط حسابك أولاً.');
     }
 
-    const user = await this.prisma.user.findUnique({ where: { telegram_id: telegramId } });
-    if (!user) throw new NotFoundException('User not found');
-
     const dialogs = await client.getDialogs({ limit: 200 });
-    let synced = 0;
+    const items: { group_id: string; group_name: string }[] = [];
 
     for (const dialog of dialogs) {
       const entity = dialog.entity;
-      if (
-        entity instanceof Api.Chat ||
-        entity instanceof Api.Channel
-      ) {
+      if (entity instanceof Api.Chat || entity instanceof Api.Channel) {
         const groupId = entity.id.toString();
-        const groupName = dialog.title ?? 'Unknown Group';
-
-        await this.prisma.group.upsert({
-          where: { user_id_group_id: { user_id: user.id, group_id: groupId } },
-          create: { user_id: user.id, group_id: groupId, group_name: groupName, is_active: true },
-          update: { group_name: groupName },
-        });
-        synced++;
+        const groupName = (dialog.title ?? 'مجموعة').replace(/\s+/g, ' ').trim().slice(0, 120);
+        items.push({ group_id: groupId, group_name: groupName || 'مجموعة' });
       }
     }
 
-    this.logger.log(`Synced ${synced} groups for user ${telegramId}`);
-    return { synced, message: `تم استيراد ${synced} مجموعة إلى حسابك.` };
+    return items.slice(0, max);
+  }
+
+  /** يحفظ فقط المجموعات التي اختارها المستخدم */
+  async saveImportedGroupsSelection(
+    telegramId: string,
+    selected: { group_id: string; group_name: string }[],
+  ): Promise<{ saved: number; message: string }> {
+    if (!selected.length) {
+      throw new BadRequestException('لم يتم اختيار أي مجموعة. اضغط على المجموعات لتحديدها ☑');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { telegram_id: telegramId } });
+    if (!user) throw new NotFoundException('المستخدم غير موجود.');
+
+    let saved = 0;
+    for (const g of selected) {
+      await this.prisma.group.upsert({
+        where: { user_id_group_id: { user_id: user.id, group_id: g.group_id } },
+        create: {
+          user_id: user.id,
+          group_id: g.group_id,
+          group_name: g.group_name.slice(0, 200),
+          is_active: true,
+        },
+        update: { group_name: g.group_name.slice(0, 200), is_active: true },
+      });
+      saved++;
+    }
+
+    this.logger.log(`[saveImportedGroupsSelection] user ${telegramId} saved ${saved} groups`);
+    return { saved, message: `تمت إضافة ${saved} مجموعة إلى قائمتك.` };
+  }
+
+  /** @deprecated استخدم listDialogGroupsForImport + saveImportedGroupsSelection */
+  async fetchAndSyncGroups(telegramId: string): Promise<{ synced: number; message: string }> {
+    const list = await this.listDialogGroupsForImport(telegramId, 500);
+    await this.saveImportedGroupsSelection(telegramId, list);
+    return { synced: list.length, message: `تم استيراد ${list.length} مجموعة (الكل).` };
   }
 
   /**
@@ -134,13 +163,28 @@ export class GroupsService {
 
   async deleteGroup(telegramId: string, groupId: string) {
     const user = await this.prisma.user.findUnique({ where: { telegram_id: telegramId } });
-    if (!user) throw new NotFoundException('User not found');
+    if (!user) throw new NotFoundException('المستخدم غير موجود.');
 
     await this.prisma.group.deleteMany({
       where: { user_id: user.id, group_id: groupId },
     });
 
-    return { message: '🗑️ Group removed.' };
+    return { message: 'تمت إزالة المجموعة من قائمتك.' };
+  }
+
+  /** حذف مجموعة من قائمة المستخدم باستخدام المفتاح الداخلي في قاعدة البيانات */
+  async deleteGroupByDbId(telegramId: string, prismaGroupId: number): Promise<{ message: string }> {
+    const user = await this.prisma.user.findUnique({ where: { telegram_id: telegramId } });
+    if (!user) throw new NotFoundException('المستخدم غير موجود.');
+
+    const group = await this.prisma.group.findFirst({
+      where: { id: prismaGroupId, user_id: user.id },
+    });
+    if (!group) throw new NotFoundException('المجموعة غير موجودة أو لا تخصّك.');
+
+    await this.prisma.group.delete({ where: { id: prismaGroupId } });
+    this.logger.log(`[deleteGroupByDbId] user ${telegramId} deleted group #${prismaGroupId} (${group.group_id})`);
+    return { message: `تم حذف «${group.group_name}» من قائمة البوت.` };
   }
 
   async getActiveGroupIds(userId: number): Promise<string[]> {
