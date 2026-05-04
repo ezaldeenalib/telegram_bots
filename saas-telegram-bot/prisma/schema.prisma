@@ -27,24 +27,31 @@ model User {
 }
 
 model ActivationCode {
-  id            Int      @id @default(autoincrement())
-  code          String   @unique
+  id            Int       @id @default(autoincrement())
+  code          String    @unique
   duration_days Int
-  is_used       Boolean  @default(false)
+  is_used       Boolean   @default(false)
   used_by_id    Int?
   used_at       DateTime?
   expires_at    DateTime?
-  created_at    DateTime @default(now())
+  created_at    DateTime  @default(now())
 
-  used_by       User?    @relation(fields: [used_by_id], references: [id])
+  used_by       User?     @relation(fields: [used_by_id], references: [id])
 }
 
+// Multiple sessions per user are supported.
+// source: "phone"      → logged in via OTP
+// source: "string"     → pasted Session String (Telethon / GramJS)
 model Session {
   id             Int      @id @default(autoincrement())
-  user_id        Int      @unique
-  session_string String
+  user_id        Int
+  label          String   @default("الحساب الافتراضي") // friendly name shown to user
+  session_string String                                  // always AES-encrypted
   phone          String?
-  status         String   @default("disconnected") // connected / disconnected
+  account_name   String?  // Telegram @username of the linked account
+  account_id     String?  // Telegram user ID of the linked account
+  source         String   @default("phone")             // phone | string
+  status         String   @default("connected")         // connected | disconnected
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
 
@@ -68,7 +75,7 @@ model Message {
   id         Int      @id @default(autoincrement())
   user_id    Int
   title      String?
-  type       String   @default("text") // text / media
+  type       String   @default("text") // text | media
   content    String
   file_id    String?
   created_at DateTime @default(now())
@@ -78,15 +85,15 @@ model Message {
 }
 
 model Schedule {
-  id            Int      @id @default(autoincrement())
+  id            Int       @id @default(autoincrement())
   user_id       Int
-  interval      Int      // seconds between sends
-  mode          String   @default("global") // global / sequential
-  message_index Int      @default(0) // for sequential mode
-  is_running    Boolean  @default(false)
+  interval      Int
+  mode          String    @default("global") // global | sequential
+  message_index Int       @default(0)
+  is_running    Boolean   @default(false)
   last_run_at   DateTime?
-  created_at    DateTime @default(now())
-  updated_at    DateTime @updatedAt
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
 
-  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
 }

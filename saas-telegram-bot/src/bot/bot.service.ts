@@ -15,6 +15,7 @@ type PendingState =
   | { step: 'message_content' }
   | { step: 'activate_code' }
   | { step: 'set_schedule_interval' }
+  | { step: 'session_string' }
   | { step: 'admin_gen_code' }
   | { step: 'admin_gen_codes' }
   | { step: 'admin_user_info' }
@@ -29,15 +30,24 @@ const MAIN_MENU = Markup.inlineKeyboard([
     Markup.button.callback('📊 حالة حسابي', 'status'),
     Markup.button.callback('🔑 تفعيل الاشتراك', 'activate'),
   ],
-  [
-    Markup.button.callback('📱 ربط الحساب', 'connect'),
-    Markup.button.callback('🔌 فصل الحساب', 'disconnect'),
-  ],
+  [Markup.button.callback('📲 إدارة الجلسات', 'menu_sessions')],
   [
     Markup.button.callback('👥 المجموعات', 'menu_groups'),
     Markup.button.callback('💬 الرسائل', 'menu_messages'),
   ],
   [Markup.button.callback('⏱ جدول الإرسال', 'menu_schedule')],
+]);
+
+const SESSIONS_MENU = Markup.inlineKeyboard([
+  [
+    Markup.button.callback('➕ إضافة جلسة (Session String)', 'add_session_string'),
+    Markup.button.callback('📱 ربط برقم الهاتف', 'connect'),
+  ],
+  [
+    Markup.button.callback('📋 جلساتي', 'my_sessions'),
+    Markup.button.callback('🔌 فصل الكل', 'disconnect'),
+  ],
+  [Markup.button.callback('🔙 رجوع', 'main_menu')],
 ]);
 
 const ADMIN_MENU = Markup.inlineKeyboard([
@@ -246,6 +256,11 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await this.safeEdit(ctx, '🏠 *القائمة الرئيسية*\n\nاختر قسماً:', kb);
     });
 
+    this.bot.action('menu_sessions', async (ctx) => {
+      await ctx.answerCbQuery();
+      await this.safeEdit(ctx, '📲 *إدارة الجلسات*\n\nيمكنك ربط حسابك عبر رقم الهاتف أو عبر Session String مباشرةً:', SESSIONS_MENU);
+    });
+
     this.bot.action('menu_groups', async (ctx) => {
       await ctx.answerCbQuery();
       await this.safeEdit(ctx, '👥 *إدارة المجموعات*\n\nاختر العملية المطلوبة:', GROUPS_MENU);
@@ -295,11 +310,77 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       await ctx.reply('📱 أرسل رقم هاتفك مع رمز الدولة:\nمثال: +9647801234567', CANCEL_KB);
     });
 
+    // OTP result redirects back to sessions menu
+    // (handled in text handler - phone/otp steps)
+
     this.bot.action('disconnect', async (ctx) => {
       await ctx.answerCbQuery();
       try {
         const r = await this.sessionService.disconnectSession(this.tid(ctx));
-        await ctx.reply(r.message, Markup.inlineKeyboard([[Markup.button.callback('🔙 القائمة', 'main_menu')]]));
+        await ctx.reply(r.message, SESSIONS_MENU);
+      } catch (e) {
+        await ctx.reply(`❌ ${(e as Error).message}`);
+      }
+    });
+
+    // ─── Session String ───────────────────────────────────────────────────────
+
+    this.bot.action('add_session_string', async (ctx) => {
+      await ctx.answerCbQuery();
+      if (!(await this.checkActive(ctx))) return;
+      this.pendingStates.set(ctx.from!.id, { step: 'session_string' });
+      await ctx.replyWithMarkdown(
+        `➕ *إضافة Session String*\n\n` +
+        `أرسل Session String الخاصة بحسابك.\n\n` +
+        `📌 *كيف تحصل عليها؟*\n` +
+        `باستخدام Telethon أو GramJS يمكنك توليدها هكذا:\n` +
+        `\`\`\`python\nfrom telethon.sync import TelegramClient\n` +
+        `from telethon.sessions import StringSession\n` +
+        `with TelegramClient(StringSession(), api_id, api_hash) as c:\n` +
+        `    print(c.session.save())\n\`\`\`\n\n` +
+        `⚠️ *لا تشارك هذه الجلسة مع أحد!*`,
+        CANCEL_KB,
+      );
+    });
+
+    this.bot.action('my_sessions', async (ctx) => {
+      await ctx.answerCbQuery();
+      if (!(await this.checkActive(ctx))) return;
+      const sessions = await this.sessionService.listSessions(this.tid(ctx));
+      if (!sessions.length) {
+        await ctx.reply('لا توجد جلسات مسجلة. اضغط *إضافة جلسة* لإضافة واحدة.', SESSIONS_MENU);
+        return;
+      }
+
+      const list = sessions
+        .map(
+          (s, i) =>
+            `${i + 1}. ${s.status === 'connected' ? '🟢' : '🔴'} *${s.label}*\n` +
+            `   ${s.account_name ? `👤 ${s.account_name}` : ''}${s.phone ? ` 📱 ${s.phone}` : ''}\n` +
+            `   المصدر: ${s.source === 'string' ? '📋 Session String' : '📱 رقم الهاتف'}`,
+        )
+        .join('\n\n');
+
+      type BtnRowS = ReturnType<typeof Markup.button.callback>[];
+      const delBtns: BtnRowS = sessions.map((s) =>
+        Markup.button.callback(`🗑 حذف: ${s.label}`, `del_session_${s.id}`),
+      );
+      const delRows: BtnRowS[] = [];
+      for (let i = 0; i < delBtns.length; i++) delRows.push([delBtns[i]]);
+      delRows.push([Markup.button.callback('🔙 رجوع', 'menu_sessions')]);
+
+      await ctx.replyWithMarkdown(
+        `*📋 جلساتك (${sessions.length}):*\n\n${list}`,
+        Markup.inlineKeyboard(delRows),
+      );
+    });
+
+    this.bot.action(/^del_session_(\d+)$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      const sessionId = parseInt((ctx.match as RegExpMatchArray)[1]);
+      try {
+        const r = await this.sessionService.deleteSession(this.tid(ctx), sessionId);
+        await ctx.reply(r.message, SESSIONS_MENU);
       } catch (e) {
         await ctx.reply(`❌ ${(e as Error).message}`);
       }
@@ -573,6 +654,22 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         return ctx.reply('✅ تم الإلغاء.', Markup.removeKeyboard());
       }
 
+      // ── Session String ────────────────────────────────────────────────────
+      if (state.step === 'session_string') {
+        this.pendingStates.delete(ctx.from!.id);
+        await ctx.reply('⏳ جاري التحقق من الجلسة...', Markup.removeKeyboard());
+        try {
+          const r = await this.sessionService.addSessionString(this.tid(ctx), text);
+          await ctx.replyWithMarkdown(r.message, SESSIONS_MENU);
+        } catch (e) {
+          await ctx.replyWithMarkdown(
+            `❌ *الجلسة غير صالحة أو منتهية*\n\n${(e as Error).message}`,
+            SESSIONS_MENU,
+          );
+        }
+        return;
+      }
+
       // ── Activate ─────────────────────────────────────────────────────────
       if (state.step === 'activate_code') {
         try {
@@ -604,7 +701,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         try {
           const r = await this.sessionService.verifyCode(this.tid(ctx), text);
           this.pendingStates.delete(ctx.from!.id);
-          await ctx.reply(`✅ ${r.message}`, { ...Markup.removeKeyboard(), ...MAIN_MENU });
+          await ctx.reply(`✅ ${r.message}`, { ...Markup.removeKeyboard(), ...SESSIONS_MENU });
         } catch (e) {
           this.pendingStates.delete(ctx.from!.id);
           await ctx.reply(`❌ ${(e as Error).message}`, Markup.removeKeyboard());

@@ -26,15 +26,23 @@ const MAIN_MENU = telegraf_1.Markup.inlineKeyboard([
         telegraf_1.Markup.button.callback('📊 حالة حسابي', 'status'),
         telegraf_1.Markup.button.callback('🔑 تفعيل الاشتراك', 'activate'),
     ],
-    [
-        telegraf_1.Markup.button.callback('📱 ربط الحساب', 'connect'),
-        telegraf_1.Markup.button.callback('🔌 فصل الحساب', 'disconnect'),
-    ],
+    [telegraf_1.Markup.button.callback('📲 إدارة الجلسات', 'menu_sessions')],
     [
         telegraf_1.Markup.button.callback('👥 المجموعات', 'menu_groups'),
         telegraf_1.Markup.button.callback('💬 الرسائل', 'menu_messages'),
     ],
     [telegraf_1.Markup.button.callback('⏱ جدول الإرسال', 'menu_schedule')],
+]);
+const SESSIONS_MENU = telegraf_1.Markup.inlineKeyboard([
+    [
+        telegraf_1.Markup.button.callback('➕ إضافة جلسة (Session String)', 'add_session_string'),
+        telegraf_1.Markup.button.callback('📱 ربط برقم الهاتف', 'connect'),
+    ],
+    [
+        telegraf_1.Markup.button.callback('📋 جلساتي', 'my_sessions'),
+        telegraf_1.Markup.button.callback('🔌 فصل الكل', 'disconnect'),
+    ],
+    [telegraf_1.Markup.button.callback('🔙 رجوع', 'main_menu')],
 ]);
 const ADMIN_MENU = telegraf_1.Markup.inlineKeyboard([
     [
@@ -205,6 +213,10 @@ let BotService = BotService_1 = class BotService {
                 : MAIN_MENU;
             await this.safeEdit(ctx, '🏠 *القائمة الرئيسية*\n\nاختر قسماً:', kb);
         });
+        this.bot.action('menu_sessions', async (ctx) => {
+            await ctx.answerCbQuery();
+            await this.safeEdit(ctx, '📲 *إدارة الجلسات*\n\nيمكنك ربط حسابك عبر رقم الهاتف أو عبر Session String مباشرةً:', SESSIONS_MENU);
+        });
         this.bot.action('menu_groups', async (ctx) => {
             await ctx.answerCbQuery();
             await this.safeEdit(ctx, '👥 *إدارة المجموعات*\n\nاختر العملية المطلوبة:', GROUPS_MENU);
@@ -254,7 +266,54 @@ let BotService = BotService_1 = class BotService {
             await ctx.answerCbQuery();
             try {
                 const r = await this.sessionService.disconnectSession(this.tid(ctx));
-                await ctx.reply(r.message, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 القائمة', 'main_menu')]]));
+                await ctx.reply(r.message, SESSIONS_MENU);
+            }
+            catch (e) {
+                await ctx.reply(`❌ ${e.message}`);
+            }
+        });
+        this.bot.action('add_session_string', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'session_string' });
+            await ctx.replyWithMarkdown(`➕ *إضافة Session String*\n\n` +
+                `أرسل Session String الخاصة بحسابك.\n\n` +
+                `📌 *كيف تحصل عليها؟*\n` +
+                `باستخدام Telethon أو GramJS يمكنك توليدها هكذا:\n` +
+                `\`\`\`python\nfrom telethon.sync import TelegramClient\n` +
+                `from telethon.sessions import StringSession\n` +
+                `with TelegramClient(StringSession(), api_id, api_hash) as c:\n` +
+                `    print(c.session.save())\n\`\`\`\n\n` +
+                `⚠️ *لا تشارك هذه الجلسة مع أحد!*`, CANCEL_KB);
+        });
+        this.bot.action('my_sessions', async (ctx) => {
+            await ctx.answerCbQuery();
+            if (!(await this.checkActive(ctx)))
+                return;
+            const sessions = await this.sessionService.listSessions(this.tid(ctx));
+            if (!sessions.length) {
+                await ctx.reply('لا توجد جلسات مسجلة. اضغط *إضافة جلسة* لإضافة واحدة.', SESSIONS_MENU);
+                return;
+            }
+            const list = sessions
+                .map((s, i) => `${i + 1}. ${s.status === 'connected' ? '🟢' : '🔴'} *${s.label}*\n` +
+                `   ${s.account_name ? `👤 ${s.account_name}` : ''}${s.phone ? ` 📱 ${s.phone}` : ''}\n` +
+                `   المصدر: ${s.source === 'string' ? '📋 Session String' : '📱 رقم الهاتف'}`)
+                .join('\n\n');
+            const delBtns = sessions.map((s) => telegraf_1.Markup.button.callback(`🗑 حذف: ${s.label}`, `del_session_${s.id}`));
+            const delRows = [];
+            for (let i = 0; i < delBtns.length; i++)
+                delRows.push([delBtns[i]]);
+            delRows.push([telegraf_1.Markup.button.callback('🔙 رجوع', 'menu_sessions')]);
+            await ctx.replyWithMarkdown(`*📋 جلساتك (${sessions.length}):*\n\n${list}`, telegraf_1.Markup.inlineKeyboard(delRows));
+        });
+        this.bot.action(/^del_session_(\d+)$/, async (ctx) => {
+            await ctx.answerCbQuery();
+            const sessionId = parseInt(ctx.match[1]);
+            try {
+                const r = await this.sessionService.deleteSession(this.tid(ctx), sessionId);
+                await ctx.reply(r.message, SESSIONS_MENU);
             }
             catch (e) {
                 await ctx.reply(`❌ ${e.message}`);
@@ -486,6 +545,18 @@ let BotService = BotService_1 = class BotService {
                 this.pendingStates.delete(ctx.from.id);
                 return ctx.reply('✅ تم الإلغاء.', telegraf_1.Markup.removeKeyboard());
             }
+            if (state.step === 'session_string') {
+                this.pendingStates.delete(ctx.from.id);
+                await ctx.reply('⏳ جاري التحقق من الجلسة...', telegraf_1.Markup.removeKeyboard());
+                try {
+                    const r = await this.sessionService.addSessionString(this.tid(ctx), text);
+                    await ctx.replyWithMarkdown(r.message, SESSIONS_MENU);
+                }
+                catch (e) {
+                    await ctx.replyWithMarkdown(`❌ *الجلسة غير صالحة أو منتهية*\n\n${e.message}`, SESSIONS_MENU);
+                }
+                return;
+            }
             if (state.step === 'activate_code') {
                 try {
                     const r = await this.authService.activateWithCode(this.tid(ctx), text);
@@ -514,7 +585,7 @@ let BotService = BotService_1 = class BotService {
                 try {
                     const r = await this.sessionService.verifyCode(this.tid(ctx), text);
                     this.pendingStates.delete(ctx.from.id);
-                    await ctx.reply(`✅ ${r.message}`, { ...telegraf_1.Markup.removeKeyboard(), ...MAIN_MENU });
+                    await ctx.reply(`✅ ${r.message}`, { ...telegraf_1.Markup.removeKeyboard(), ...SESSIONS_MENU });
                 }
                 catch (e) {
                     this.pendingStates.delete(ctx.from.id);
