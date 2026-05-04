@@ -98,6 +98,7 @@ let BotService = BotService_1 = class BotService {
     bot;
     pendingStates = new Map();
     ownerId;
+    handlerTimeoutMs = 600_000;
     constructor(config, authService, sessionService, groupsService, messagesService, scheduleService) {
         this.config = config;
         this.authService = authService;
@@ -124,7 +125,13 @@ let BotService = BotService_1 = class BotService {
                 : new https_proxy_agent_1.HttpsProxyAgent(proxyUrl);
             this.logger.log(`Using proxy: ${proxyUrl}`);
         }
-        this.bot = new telegraf_1.Telegraf(token, agent ? { telegram: { agent } } : {});
+        const parsedTimeout = parseInt(this.config.get('BOT_HANDLER_TIMEOUT_MS') ?? '600000', 10);
+        this.handlerTimeoutMs =
+            Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 600_000;
+        this.bot = new telegraf_1.Telegraf(token, {
+            handlerTimeout: this.handlerTimeoutMs,
+            ...(agent ? { telegram: { agent } } : {}),
+        });
         this.registerHandlers();
         void this.bot.launch()
             .then(() => this.logger.log(`🤖 البوت يعمل | المالك: ${this.ownerId}`))
@@ -205,6 +212,12 @@ let BotService = BotService_1 = class BotService {
         this.bot.catch((err, ctx) => {
             if (this.isStaleCallbackError(err))
                 return;
+            const name = err instanceof Error ? err.name : '';
+            if (name === 'TimeoutError') {
+                this.logger.warn(`Bot handler timed out (${ctx.updateType}). ` +
+                    `Increase BOT_HANDLER_TIMEOUT_MS if needed (current: ${this.handlerTimeoutMs}ms).`);
+                return;
+            }
             this.logger.error(`Bot error ${ctx.updateType}:`, err);
         });
     }

@@ -16,6 +16,7 @@ export declare class BotService implements OnModuleInit, OnModuleDestroy {
     private bot;
     private pendingStates;
     private ownerId;
+    private handlerTimeoutMs;
     constructor(config: ConfigService, authService: AuthService, sessionService: SessionService, groupsService: GroupsService, messagesService: MessagesService, scheduleService: ScheduleService);
     onModuleInit(): Promise<void>;
     onModuleDestroy(): Promise<void>;

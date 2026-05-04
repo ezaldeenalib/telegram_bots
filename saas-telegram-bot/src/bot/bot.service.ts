@@ -105,6 +105,8 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   private bot: Telegraf;
   private pendingStates = new Map<number, PendingState>();
   private ownerId: number;
+  /** Telegraf `handlerTimeout` (ms) — stored for logging in catch */
+  private handlerTimeoutMs = 600_000;
 
   constructor(
     private readonly config: ConfigService,
@@ -138,7 +140,18 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       this.logger.log(`Using proxy: ${proxyUrl}`);
     }
 
-    this.bot = new Telegraf(token, agent ? { telegram: { agent } } : {});
+    // MTProto (dialogs, getEntity, connect) can exceed Telegraf default 90s
+    const parsedTimeout = parseInt(
+      this.config.get<string>('BOT_HANDLER_TIMEOUT_MS') ?? '600000',
+      10,
+    );
+    this.handlerTimeoutMs =
+      Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 600_000;
+
+    this.bot = new Telegraf(token, {
+      handlerTimeout: this.handlerTimeoutMs,
+      ...(agent ? { telegram: { agent } } : {}),
+    });
     this.registerHandlers();
 
     void this.bot.launch()
@@ -233,6 +246,14 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     this.registerPhotoHandler();
     this.bot.catch((err, ctx) => {
       if (this.isStaleCallbackError(err)) return;
+      const name = err instanceof Error ? err.name : '';
+      if (name === 'TimeoutError') {
+        this.logger.warn(
+          `Bot handler timed out (${ctx.updateType}). ` +
+            `Increase BOT_HANDLER_TIMEOUT_MS if needed (current: ${this.handlerTimeoutMs}ms).`,
+        );
+        return;
+      }
       this.logger.error(`Bot error ${ctx.updateType}:`, err);
     });
   }
