@@ -1,0 +1,16 @@
+{
+  "name": "telegram-bot-root",
+  "private": true,
+  "description": "Wrapper scripts — real app lives in saas-telegram-bot/",
+  "scripts": {
+    "install:app": "npm install --prefix saas-telegram-bot",
+    "build": "npm --prefix saas-telegram-bot run build",
+    "start": "npm --prefix saas-telegram-bot run start",
+    "start:dev": "npm --prefix saas-telegram-bot run start:dev",
+    "start:prod": "npm --prefix saas-telegram-bot run start:prod",
+    "db:migrate": "npm --prefix saas-telegram-bot run db:migrate",
+    "db:generate": "npm --prefix saas-telegram-bot run db:generate",
+    "db:deploy": "npm --prefix saas-telegram-bot exec -- prisma migrate deploy",
+    "db:seed": "npm --prefix saas-telegram-bot run db:seed"
+  }
+}

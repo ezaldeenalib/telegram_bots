@@ -1,0 +1,92 @@
+// Prisma Schema - SQLite Compatible
+// SaaS Telegram Bot System
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id               Int              @id @default(autoincrement())
+  telegram_id      String           @unique
+  username         String?
+  first_name       String?
+  subscription_end DateTime?
+  is_active        Boolean          @default(false)
+  created_at       DateTime         @default(now())
+  updated_at       DateTime         @updatedAt
+
+  activation_codes ActivationCode[]
+  sessions         Session[]
+  groups           Group[]
+  messages         Message[]
+  schedules        Schedule[]
+}
+
+model ActivationCode {
+  id            Int      @id @default(autoincrement())
+  code          String   @unique
+  duration_days Int
+  is_used       Boolean  @default(false)
+  used_by_id    Int?
+  used_at       DateTime?
+  expires_at    DateTime?
+  created_at    DateTime @default(now())
+
+  used_by       User?    @relation(fields: [used_by_id], references: [id])
+}
+
+model Session {
+  id             Int      @id @default(autoincrement())
+  user_id        Int      @unique
+  session_string String
+  phone          String?
+  status         String   @default("disconnected") // connected / disconnected
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  user           User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model Group {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  group_id   String
+  group_name String
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, group_id])
+}
+
+model Message {
+  id         Int      @id @default(autoincrement())
+  user_id    Int
+  title      String?
+  type       String   @default("text") // text / media
+  content    String
+  file_id    String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model Schedule {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  interval      Int      // seconds between sends
+  mode          String   @default("global") // global / sequential
+  message_index Int      @default(0) // for sequential mode
+  is_running    Boolean  @default(false)
+  last_run_at   DateTime?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}

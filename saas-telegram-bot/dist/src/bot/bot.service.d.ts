@@ -1,0 +1,30 @@
+import { OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AuthService } from '../auth/auth.service';
+import { SessionService } from '../session/session.service';
+import { GroupsService } from '../groups/groups.service';
+import { MessagesService } from '../messages/messages.service';
+import { ScheduleService } from '../schedule/schedule.service';
+export declare class BotService implements OnModuleInit, OnModuleDestroy {
+    private readonly config;
+    private readonly authService;
+    private readonly sessionService;
+    private readonly groupsService;
+    private readonly messagesService;
+    private readonly scheduleService;
+    private readonly logger;
+    private bot;
+    private pendingStates;
+    private ownerId;
+    constructor(config: ConfigService, authService: AuthService, sessionService: SessionService, groupsService: GroupsService, messagesService: MessagesService, scheduleService: ScheduleService);
+    onModuleInit(): Promise<void>;
+    onModuleDestroy(): Promise<void>;
+    private isOwner;
+    private checkOwner;
+    private checkActive;
+    private registerHandlers;
+    private registerUserCommands;
+    private registerAdminCommands;
+    private registerTextHandler;
+    private registerPhotoHandler;
+}
