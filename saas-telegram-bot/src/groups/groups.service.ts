@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionService } from '../session/session.service';
 import { Api } from 'telegram';
@@ -43,7 +43,67 @@ export class GroupsService {
     }
 
     this.logger.log(`Synced ${synced} groups for user ${telegramId}`);
-    return { synced, message: `✅ Synced ${synced} groups to your account.` };
+    return { synced, message: `تم استيراد ${synced} مجموعة إلى حسابك.` };
+  }
+
+  /**
+   * Resolve a group/channel by ID or @username via MTProto and save it for this bot user.
+   * Requires an active gramJS session. User must be a member of the target chat.
+   */
+  async addGroupByPeerInput(
+    telegramId: string,
+    rawInput: string,
+  ): Promise<{ message: string; group_id: string; group_name: string }> {
+    const client = await this.sessionService.getClient(telegramId);
+    if (!client) {
+      throw new NotFoundException('لا توجد جلسة MTProto نشطة. اربط حسابك من «إدارة الجلسات» أولاً.');
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { telegram_id: telegramId } });
+    if (!user) throw new NotFoundException('المستخدم غير موجود.');
+
+    const input = rawInput.trim();
+    if (!input) throw new BadRequestException('أرسل معرّف المجموعة أو رابطها.');
+
+    let entity: Api.Chat | Api.Channel;
+    try {
+      const resolved = await client.getEntity(input);
+      if (resolved instanceof Api.Chat || resolved instanceof Api.Channel) {
+        entity = resolved;
+      } else {
+        throw new BadRequestException('هذا المعرف ليس مجموعة أو قناة.');
+      }
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
+      this.logger.warn(`[addGroupByPeerInput] getEntity failed for ${telegramId}: ${(e as Error).message}`);
+      throw new BadRequestException(
+        'تعذّر العثور على المجموعة. تأكد من المعرف، وأن حسابك المربوط عضو فيها.',
+      );
+    }
+
+    let groupId: string;
+    let groupName: string;
+
+    if (entity instanceof Api.Chat) {
+      groupId = entity.id.toString();
+      groupName = entity.title ?? 'مجموعة';
+    } else {
+      groupId = entity.id.toString();
+      groupName = entity.title ?? 'قناة';
+    }
+
+    await this.prisma.group.upsert({
+      where: { user_id_group_id: { user_id: user.id, group_id: groupId } },
+      create: { user_id: user.id, group_id: groupId, group_name: groupName, is_active: true },
+      update: { group_name: groupName, is_active: true },
+    });
+
+    this.logger.log(`[addGroupByPeerInput] user ${telegramId} added group ${groupId} (${groupName})`);
+    return {
+      message: `تمت إضافة «${groupName}» بنجاح.\nالمعرّف المخزّن: ${groupId}`,
+      group_id: groupId,
+      group_name: groupName,
+    };
   }
 
   async getGroups(telegramId: string) {

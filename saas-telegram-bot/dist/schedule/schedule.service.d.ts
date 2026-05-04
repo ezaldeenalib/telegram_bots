@@ -14,9 +14,9 @@ export declare class ScheduleService {
     constructor(sendQueue: Queue, prisma: PrismaService, sessionService: SessionService, groupsService: GroupsService, messagesService: MessagesService);
     createSchedule(telegramId: string, interval: number, mode?: 'global' | 'sequential'): Promise<{
         id: number;
+        user_id: number;
         created_at: Date;
         updated_at: Date;
-        user_id: number;
         interval: number;
         mode: string;
         message_index: number;

@@ -65,6 +65,7 @@ const GROUPS_MENU = telegraf_1.Markup.inlineKeyboard([
         telegraf_1.Markup.button.callback('🔄 استيراد المجموعات', 'sync_groups'),
         telegraf_1.Markup.button.callback('📋 قائمة مجموعاتي', 'my_groups'),
     ],
+    [telegraf_1.Markup.button.callback('➕ إضافة مجموعة بالمعرف (ID)', 'add_group_by_id')],
     [telegraf_1.Markup.button.callback('🔙 رجوع', 'main_menu')],
 ]);
 const MESSAGES_MENU = telegraf_1.Markup.inlineKeyboard([
@@ -145,7 +146,7 @@ let BotService = BotService_1 = class BotService {
     isOwner(ctx) { return ctx.from?.id === this.ownerId; }
     async checkOwner(ctx) {
         if (!this.isOwner(ctx)) {
-            await ctx.answerCbQuery?.('⛔ هذا الأمر للمالك فقط').catch(() => null);
+            await this.answerCbSafe(ctx, '⛔ هذا الأمر للمالك فقط');
             await ctx.reply('⛔ هذا الأمر مخصص للمالك فقط.');
             return false;
         }
@@ -166,6 +167,27 @@ let BotService = BotService_1 = class BotService {
             return err.message;
         return String(err);
     }
+    isStaleCallbackError(err) {
+        const desc = err && typeof err === 'object' && 'response' in err
+            ? String(err.response?.description ?? '')
+            : '';
+        const d = desc.toLowerCase();
+        return (d.includes('too old') ||
+            d.includes('query id is invalid') ||
+            d.includes('response timeout expired'));
+    }
+    async answerCbSafe(ctx, text) {
+        if (!ctx.callbackQuery)
+            return;
+        try {
+            await ctx.answerCbQuery(text);
+        }
+        catch (err) {
+            if (this.isStaleCallbackError(err))
+                return;
+            throw err;
+        }
+    }
     async safeEdit(ctx, text, extra) {
         try {
             await ctx.editMessageText(text, { parse_mode: 'Markdown', ...extra });
@@ -180,7 +202,11 @@ let BotService = BotService_1 = class BotService {
         this.registerCommands();
         this.registerTextHandler();
         this.registerPhotoHandler();
-        this.bot.catch((err, ctx) => this.logger.error(`Bot error ${ctx.updateType}:`, err));
+        this.bot.catch((err, ctx) => {
+            if (this.isStaleCallbackError(err))
+                return;
+            this.logger.error(`Bot error ${ctx.updateType}:`, err);
+        });
     }
     registerStartHelp() {
         this.bot.start(async (ctx) => {
@@ -208,7 +234,7 @@ let BotService = BotService_1 = class BotService {
     }
     registerCallbacks() {
         this.bot.action('main_menu', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             const owner = ctx.from?.id === this.ownerId;
             const kb = owner
                 ? telegraf_1.Markup.inlineKeyboard([
@@ -219,29 +245,29 @@ let BotService = BotService_1 = class BotService {
             await this.safeEdit(ctx, '🏠 *القائمة الرئيسية*\n\nاختر قسماً:', kb);
         });
         this.bot.action('menu_sessions', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             await this.safeEdit(ctx, '📲 *إدارة الجلسات*\n\nيمكنك ربط حسابك عبر رقم الهاتف أو عبر Session String مباشرةً:', SESSIONS_MENU);
         });
         this.bot.action('menu_groups', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             await this.safeEdit(ctx, '👥 *إدارة المجموعات*\n\nاختر العملية المطلوبة:', GROUPS_MENU);
         });
         this.bot.action('menu_messages', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             await this.safeEdit(ctx, '💬 *إدارة الرسائل*\n\nاختر العملية المطلوبة:', MESSAGES_MENU);
         });
         this.bot.action('menu_schedule', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             await this.safeEdit(ctx, '⏱ *جدول الإرسال التلقائي*\n\nاختر العملية المطلوبة:', SCHEDULE_MENU);
         });
         this.bot.action('admin_panel', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             await this.safeEdit(ctx, '👑 *لوحة الإدارة*\n\nاختر العملية:', ADMIN_MENU);
         });
         this.bot.action('status', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             const s = await this.authService.getUserStatus(this.tid(ctx));
             if (!s.registered) {
                 await ctx.reply('❌ لم تسجّل بعد. أرسل /start');
@@ -256,19 +282,19 @@ let BotService = BotService_1 = class BotService {
             await this.safeEdit(ctx, text, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 رجوع', 'main_menu')]]));
         });
         this.bot.action('activate', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             this.pendingStates.set(ctx.from.id, { step: 'activate_code' });
             await ctx.reply('🔑 أرسل كود التفعيل الآن:', CANCEL_KB);
         });
         this.bot.action('connect', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'phone' });
             await ctx.reply('📱 أرسل رقم هاتفك مع رمز الدولة:\nمثال: +9647801234567', CANCEL_KB);
         });
         this.bot.action('disconnect', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             try {
                 const r = await this.sessionService.disconnectSession(this.tid(ctx));
                 await ctx.reply(r.message, SESSIONS_MENU);
@@ -278,7 +304,7 @@ let BotService = BotService_1 = class BotService {
             }
         });
         this.bot.action('add_session_string', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'session_string' });
@@ -293,7 +319,7 @@ let BotService = BotService_1 = class BotService {
                 `⚠️ *لا تشارك هذه الجلسة مع أحد!*`, CANCEL_KB);
         });
         this.bot.action('my_sessions', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             const sessions = await this.sessionService.listSessions(this.tid(ctx));
@@ -314,7 +340,7 @@ let BotService = BotService_1 = class BotService {
             await ctx.replyWithMarkdown(`*📋 جلساتك (${sessions.length}):*\n\n${list}`, telegraf_1.Markup.inlineKeyboard(delRows));
         });
         this.bot.action(/^del_session_(\d+)$/, async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             const sessionId = parseInt(ctx.match[1]);
             try {
                 const r = await this.sessionService.deleteSession(this.tid(ctx), sessionId);
@@ -325,7 +351,7 @@ let BotService = BotService_1 = class BotService {
             }
         });
         this.bot.action('sync_groups', async (ctx) => {
-            await ctx.answerCbQuery('⏳ جاري الاستيراد...');
+            await this.answerCbSafe(ctx, '⏳ جاري الاستيراد...');
             if (!(await this.checkActive(ctx)))
                 return;
             try {
@@ -338,28 +364,39 @@ let BotService = BotService_1 = class BotService {
             }
         });
         this.bot.action('my_groups', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             const groups = await this.groupsService.getGroups(this.tid(ctx));
             if (!groups.length) {
-                await ctx.reply('لا توجد مجموعات. اضغط *استيراد المجموعات* أولاً.', GROUPS_MENU);
+                await ctx.reply('لا توجد مجموعات. استوردها أو أضف واحدة بالمعرف.', GROUPS_MENU);
                 return;
             }
             const list = groups
-                .map((g, i) => `${i + 1}. ${g.is_active ? '✅' : '❌'} *${g.group_name}*`)
+                .map((g, i) => `${i + 1}. ${g.is_active ? '✅' : '❌'} ${g.group_name} (ID: ${g.group_id})`)
                 .join('\n');
-            await ctx.replyWithMarkdown(`*📋 مجموعاتك (${groups.length}):*\n\n${list}`, GROUPS_MENU);
+            await ctx.reply(`📋 مجموعاتك (${groups.length}):\n\n${list}`, GROUPS_MENU);
+        });
+        this.bot.action('add_group_by_id', async (ctx) => {
+            await this.answerCbSafe(ctx);
+            if (!(await this.checkActive(ctx)))
+                return;
+            this.pendingStates.set(ctx.from.id, { step: 'group_id_input' });
+            await ctx.reply('➕ إضافة مجموعة بالمعرف\n\n' +
+                'أرسل أحد التالي:\n' +
+                '• معرف المجموعة مثل: -1001234567890\n' +
+                '• أو اسم المستخدم: @groupusername\n\n' +
+                '⚠️ يجب أن يكون حسابك المربوط عضوًا في هذه المجموعة.', CANCEL_KB);
         });
         this.bot.action('add_message', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'message_content' });
             await ctx.reply('📝 أرسل نص الرسالة الآن.\nأو أرسل صورة مع تعليق للرسالة الإعلامية:', CANCEL_KB);
         });
         this.bot.action('my_messages', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             const msgs = await this.messagesService.getMessages(this.tid(ctx));
@@ -379,7 +416,7 @@ let BotService = BotService_1 = class BotService {
             await ctx.replyWithMarkdown(`*💬 رسائلك (${msgs.length}):*\n\n\`\`\`\n${list}\n\`\`\``, telegraf_1.Markup.inlineKeyboard(rows));
         });
         this.bot.action(/^del_msg_(\d+)$/, async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             const msgId = parseInt(ctx.match[1]);
             try {
                 await this.messagesService.deleteMessage(this.tid(ctx), msgId);
@@ -390,14 +427,14 @@ let BotService = BotService_1 = class BotService {
             }
         });
         this.bot.action('set_schedule', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'set_schedule_interval' });
             await ctx.reply('⚙️ أرسل الإعداد بالصيغة التالية:\n`<ثواني> <global|sequential>`\n\nمثال:\n`3600 sequential` — كل ساعة بالتتابع\n`1800 global` — كل نصف ساعة للجميع', CANCEL_KB);
         });
         this.bot.action('schedule_status', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             const s = await this.scheduleService.getScheduleStatus(this.tid(ctx));
             if (!s.configured) {
                 await ctx.reply('لم يُضبط جدول بعد. اضغط *ضبط الجدول*.', SCHEDULE_MENU);
@@ -410,7 +447,7 @@ let BotService = BotService_1 = class BotService {
                 `آخر إرسال: ${s.last_run_at ? new Date(s.last_run_at).toLocaleString('ar-IQ') : 'لا يوجد'}`, SCHEDULE_MENU);
         });
         this.bot.action('start_schedule', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkActive(ctx)))
                 return;
             try {
@@ -422,7 +459,7 @@ let BotService = BotService_1 = class BotService {
             }
         });
         this.bot.action('stop_schedule', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             try {
                 const r = await this.scheduleService.stopSchedule(this.tid(ctx));
                 await ctx.reply(`⏹ ${r.message}`, SCHEDULE_MENU);
@@ -432,7 +469,7 @@ let BotService = BotService_1 = class BotService {
             }
         });
         this.bot.action('admin_stats', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             const s = await this.authService.getSystemStats();
@@ -447,7 +484,7 @@ let BotService = BotService_1 = class BotService {
                 `👥 المجموعات: *${s.totalGroups}*`, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 لوحة الإدارة', 'admin_panel')]]));
         });
         this.bot.action('admin_all_users', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             const users = await this.authService.getAllUsers();
@@ -464,35 +501,35 @@ let BotService = BotService_1 = class BotService {
             await ctx.replyWithMarkdown(`*👥 المستخدمون (${users.length}):*\n\n${list}`, telegraf_1.Markup.inlineKeyboard([[telegraf_1.Markup.button.callback('🔙 لوحة الإدارة', 'admin_panel')]]));
         });
         this.bot.action('admin_gen_code', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'admin_gen_code' });
             await ctx.reply('🎟 أرسل عدد أيام الاشتراك:\nمثال: `30`', CANCEL_KB);
         });
         this.bot.action('admin_gen_codes', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'admin_gen_codes' });
             await ctx.reply('🎟🎟 أرسل عدد الأيام والكمية:\nمثال: `30 5` (30 يوماً، 5 أكواد)', CANCEL_KB);
         });
         this.bot.action('admin_user_info', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'admin_user_info' });
             await ctx.reply('🔍 أرسل Telegram ID للمستخدم:', CANCEL_KB);
         });
         this.bot.action('admin_ban', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'admin_ban' });
             await ctx.reply('🚫 أرسل Telegram ID للمستخدم المراد إيقافه:', CANCEL_KB);
         });
         this.bot.action('admin_unban', async (ctx) => {
-            await ctx.answerCbQuery();
+            await this.answerCbSafe(ctx);
             if (!(await this.checkOwner(ctx)))
                 return;
             this.pendingStates.set(ctx.from.id, { step: 'admin_unban' });
@@ -559,6 +596,18 @@ let BotService = BotService_1 = class BotService {
                 }
                 catch (e) {
                     await ctx.reply(`❌ الجلسة غير صالحة أو منتهية.\n\n${this.errText(e)}`, SESSIONS_MENU);
+                }
+                return;
+            }
+            if (state.step === 'group_id_input') {
+                this.pendingStates.delete(ctx.from.id);
+                await ctx.reply('⏳ جاري التحقق من المجموعة...', telegraf_1.Markup.removeKeyboard());
+                try {
+                    const r = await this.groupsService.addGroupByPeerInput(this.tid(ctx), text);
+                    await ctx.reply(`✅ ${r.message}`, GROUPS_MENU);
+                }
+                catch (e) {
+                    await ctx.reply(`❌ ${this.errText(e)}`, GROUPS_MENU);
                 }
                 return;
             }

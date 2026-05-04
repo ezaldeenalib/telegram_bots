@@ -48,7 +48,56 @@ let GroupsService = GroupsService_1 = class GroupsService {
             }
         }
         this.logger.log(`Synced ${synced} groups for user ${telegramId}`);
-        return { synced, message: `✅ Synced ${synced} groups to your account.` };
+        return { synced, message: `تم استيراد ${synced} مجموعة إلى حسابك.` };
+    }
+    async addGroupByPeerInput(telegramId, rawInput) {
+        const client = await this.sessionService.getClient(telegramId);
+        if (!client) {
+            throw new common_1.NotFoundException('لا توجد جلسة MTProto نشطة. اربط حسابك من «إدارة الجلسات» أولاً.');
+        }
+        const user = await this.prisma.user.findUnique({ where: { telegram_id: telegramId } });
+        if (!user)
+            throw new common_1.NotFoundException('المستخدم غير موجود.');
+        const input = rawInput.trim();
+        if (!input)
+            throw new common_1.BadRequestException('أرسل معرّف المجموعة أو رابطها.');
+        let entity;
+        try {
+            const resolved = await client.getEntity(input);
+            if (resolved instanceof telegram_1.Api.Chat || resolved instanceof telegram_1.Api.Channel) {
+                entity = resolved;
+            }
+            else {
+                throw new common_1.BadRequestException('هذا المعرف ليس مجموعة أو قناة.');
+            }
+        }
+        catch (e) {
+            if (e instanceof common_1.BadRequestException)
+                throw e;
+            this.logger.warn(`[addGroupByPeerInput] getEntity failed for ${telegramId}: ${e.message}`);
+            throw new common_1.BadRequestException('تعذّر العثور على المجموعة. تأكد من المعرف، وأن حسابك المربوط عضو فيها.');
+        }
+        let groupId;
+        let groupName;
+        if (entity instanceof telegram_1.Api.Chat) {
+            groupId = entity.id.toString();
+            groupName = entity.title ?? 'مجموعة';
+        }
+        else {
+            groupId = entity.id.toString();
+            groupName = entity.title ?? 'قناة';
+        }
+        await this.prisma.group.upsert({
+            where: { user_id_group_id: { user_id: user.id, group_id: groupId } },
+            create: { user_id: user.id, group_id: groupId, group_name: groupName, is_active: true },
+            update: { group_name: groupName, is_active: true },
+        });
+        this.logger.log(`[addGroupByPeerInput] user ${telegramId} added group ${groupId} (${groupName})`);
+        return {
+            message: `تمت إضافة «${groupName}» بنجاح.\nالمعرّف المخزّن: ${groupId}`,
+            group_id: groupId,
+            group_name: groupName,
+        };
     }
     async getGroups(telegramId) {
         const user = await this.prisma.user.findUnique({ where: { telegram_id: telegramId } });

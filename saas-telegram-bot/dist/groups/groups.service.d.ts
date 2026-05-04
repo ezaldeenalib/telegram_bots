@@ -9,21 +9,26 @@ export declare class GroupsService {
         synced: number;
         message: string;
     }>;
+    addGroupByPeerInput(telegramId: string, rawInput: string): Promise<{
+        message: string;
+        group_id: string;
+        group_name: string;
+    }>;
     getGroups(telegramId: string): Promise<{
         id: number;
-        is_active: boolean;
-        created_at: Date;
         user_id: number;
         group_id: string;
         group_name: string;
+        is_active: boolean;
+        created_at: Date;
     }[]>;
     toggleGroup(telegramId: string, groupId: string, isActive: boolean): Promise<{
         id: number;
-        is_active: boolean;
-        created_at: Date;
         user_id: number;
         group_id: string;
         group_name: string;
+        is_active: boolean;
+        created_at: Date;
     }>;
     deleteGroup(telegramId: string, groupId: string): Promise<{
         message: string;
